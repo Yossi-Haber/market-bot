@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=1080, initial-scale=1">
+  <title>{{title}}</title>
+  <style>{{styles}}</style>
+</head>
+<body>
+  <main class="card">
+    <header class="header" data-section="header">
+      <div><div class="eyebrow">MARKET BOT / DAILY BRIEF</div><h1>{{title}}</h1><div class="date">{{market_date}}</div></div>
+      <span class="source-badge neutral">{{source}}</span>
+    </header>
+    <section class="overview panel" data-section="overview"><div class="section-kicker">תמונת מצב</div><p>{{narrative}}</p></section>
+    <section class="panel" data-section="core"><div class="section-title"><h2>המדדים המרכזיים</h2><span>ETF PROXIES</span></div><div class="metrics">{{indices}}</div></section>
+    <div class="two-col">
+      <section class="panel" data-section="sectors"><div class="section-title"><h2>סקטורים</h2><span class="breadth">{{breadth}}</span></div><div class="subhead">מובילים</div>{{top_sectors}}<div class="subhead weak">חלשים</div>{{bottom_sectors}}</section>
+      <section class="panel" data-section="macro"><div class="section-title"><h2>מאקרו</h2><span>נתונים נבחרים</span></div>{{macro}}</section>
+    </div>
+    <section class="panel movers" data-section="movers"><div class="section-title"><h2>מניות בולטות</h2><span>TOP 5 / BOTTOM 5</span></div><div class="mover-grid"><div data-section="gainers"><div class="subhead positive-text">עולות</div>{{gainers}}</div><div data-section="losers"><div class="subhead negative-text">יורדות</div>{{losers}}</div></div></section>
+    <footer class="footer" data-section="footer"><div><span class="section-kicker">איכות הנתונים</span><strong>{{readiness}}</strong></div><div class="chips">{{warnings}}</div></footer>
+  </main>
+</body>
+</html>

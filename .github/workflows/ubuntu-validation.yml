@@ -1,0 +1,130 @@
+name: Ubuntu Offline Compatibility Validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-validation:
+    name: Linux tests and Hebrew poster fixture
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # Explicitly blank: this validation job must never inherit production credentials.
+      TWELVE_DATA_API_KEY: ""
+      OPENAI_API_KEY: ""
+      TELEGRAM_BOT_TOKEN: ""
+      TELEGRAM_CHAT_ID: ""
+      TELEGRAM_CHAT_IDS: ""
+      FINNHUB_API_KEY: ""
+      MARKETAUX_API_TOKEN: ""
+      FRED_API_KEY: ""
+      FMP_API_KEY: ""
+      ALPHA_VANTAGE_API_KEY: ""
+      ENABLE_LLM: "false"
+
+    steps:
+      - name: Checkout source only
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install Hebrew and Latin fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes fonts-noto-core fonts-liberation2 fontconfig
+          fc-cache --force
+          dpkg-query -W -f='${Package}=${Version}\n' fonts-noto-core fonts-liberation2 fontconfig
+          fc-match -f '%{family} | %{style} | %{file}\n' 'Noto Sans Hebrew'
+          fc-match -f '%{family} | %{style} | %{file}\n' 'Liberation Sans'
+
+      - name: Install pinned Python dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+
+      - name: Install Playwright Chromium and Linux libraries
+        run: python -m playwright install --with-deps chromium
+
+      - name: Record runner versions
+        run: |
+          mkdir -p output/qa/github_actions_migration_phase1/fixture_validation
+          {
+            cat /etc/os-release
+            echo
+            python --version
+            python -m pip freeze
+            python -m playwright --version
+            chromium_path="$(python -c 'from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(headless=True); print(b.version); b.close(); p.stop()')"
+            echo "Chromium browser version: ${chromium_path}"
+            dpkg-query -W -f='${Package}=${Version}\n' fonts-noto-core fonts-liberation2 fontconfig
+            fc-match -f '%{family} | %{style} | %{file}\n' 'Noto Sans Hebrew'
+            fc-match -f '%{family} | %{style} | %{file}\n' 'Liberation Sans'
+          } > output/qa/github_actions_migration_phase1/fixture_validation/runner_versions.txt
+
+      - name: Run all offline Linux-compatible tests
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest -q -ra -p tests.offline_network_guard 2>&1 | tee output/qa/github_actions_migration_phase1/fixture_validation/pytest_results.txt
+
+      - name: Render and validate saved Hebrew V3 fixture
+        run: >-
+          python validate_linux_compatibility.py
+          --output-dir output/qa/github_actions_migration_phase1/fixture_validation
+
+      - name: Create compact validation report
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          base = Path("output/qa/github_actions_migration_phase1/fixture_validation")
+          result_path = base / "validation_result.json"
+          runtime = {}
+          visual = {}
+          if result_path.exists():
+              result = json.loads(result_path.read_text(encoding="utf-8"))
+              runtime = result.get("runtime", {})
+              visual = result.get("visual_validation", {})
+          report = [
+              "# Ubuntu Offline Compatibility Validation",
+              "",
+              f"- OS: {runtime.get('os', {}).get('platform', 'not generated')}",
+              f"- Python: {runtime.get('python', 'not generated').splitlines()[0]}",
+              f"- Chromium: {runtime.get('browser', {}).get('version', 'not generated')}",
+              f"- Dimensions: {visual.get('dimensions', 'not generated')}",
+              f"- RTL: {visual.get('rtl', 'not generated')}",
+              f"- Overflow: {visual.get('overflow', 'not generated')}",
+              f"- External page requests: {visual.get('external_requests', 'not generated')}",
+              f"- Visual validation: {visual.get('valid', 'not generated')}",
+              "- Application API/network calls: blocked by the pytest socket guard; fixture renderer reports zero external resource requests.",
+              "- Telegram delivery: disabled; no credentials are mapped.",
+              "",
+              "## Dependency and font versions",
+              "",
+              "See `runner_versions.txt` in the workflow artifact for exact OS, Python, package, browser and font versions.",
+          ]
+          (base / "validation_report.md").write_text("\n".join(report) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload sanitized validation artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ubuntu-offline-visual-validation
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            output/qa/github_actions_migration_phase1/fixture_validation/daily_report_card_v3.png
+            output/qa/github_actions_migration_phase1/fixture_validation/daily_report_v3_visual_validation.json
+            output/qa/github_actions_migration_phase1/fixture_validation/validation_result.json
+            output/qa/github_actions_migration_phase1/fixture_validation/validation_report.md
+            output/qa/github_actions_migration_phase1/fixture_validation/runner_versions.txt
+            output/qa/github_actions_migration_phase1/fixture_validation/pytest_results.txt

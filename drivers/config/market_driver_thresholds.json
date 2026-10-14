@@ -1,0 +1,12 @@
+{
+  "index_move_material_pct": 0.8,
+  "sector_move_material_pct": 1.5,
+  "us10y_move_material_bp": 8.0,
+  "dxy_move_material_pct": 0.5,
+  "vix_move_material_pct": 8.0,
+  "wti_move_material_pct": 2.0,
+  "gold_move_material_pct": 1.0,
+  "breadth_weak_count": 8,
+  "breadth_strong_count": 8,
+  "sector_dispersion_material_pct": 2.5
+}

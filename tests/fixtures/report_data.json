@@ -1,0 +1,39 @@
+{
+  "market_date": "2026-09-25",
+  "market_overview": {"market_direction": "BROADLY_POSITIVE"},
+  "indices": [
+    {"symbol": "SPY", "display_name": "SPDR S&P 500 ETF", "close": 771.34998, "change": 4.16999, "change_pct": 0.543548, "representation": "ETF_PROXY"},
+    {"symbol": "QQQ", "display_name": "Invesco QQQ Trust", "close": 744.5, "change": 3.400024, "change_pct": 0.458781, "representation": "ETF_PROXY"},
+    {"symbol": "DIA", "display_name": "SPDR Dow Jones Industrial Average ETF", "close": 517.48999, "change": 4.81, "change_pct": 0.938207, "representation": "ETF_PROXY"},
+    {"symbol": "IWM", "display_name": "iShares Russell 2000 ETF", "close": 281.97, "change": 0.31, "change_pct": 0.110062, "representation": "ETF_PROXY"}
+  ],
+  "sectors": {
+    "all": [
+      {"symbol": "XLK", "close": 196.27, "change": 1.56, "change_pct": 0.801186},
+      {"symbol": "XLF", "close": 54.84, "change": 0.31, "change_pct": 0.568494},
+      {"symbol": "XLE", "close": 62.04, "change": -0.56, "change_pct": -0.894567}
+    ],
+    "top": [{"symbol": "XLK", "change_pct": 0.801186}],
+    "bottom": [{"symbol": "XLE", "change_pct": -0.894567}],
+    "positive_count": 2,
+    "negative_count": 1,
+    "valid_count": 3,
+    "breadth": {"fraction": 0.666667, "percentage": 66.6667}
+  },
+  "macro": {
+    "VIX": {"symbol": "VIX", "close": 14.87, "change": -0.8, "change_pct": -5.105297, "freshness": "current"},
+    "GOLD": {"symbol": "XAU/USD", "close": 4286.73973, "change": 11.45563, "change_pct": 0.26795, "freshness": "current"},
+    "DXY": {"symbol": "DXY", "close": 100.97, "change": -0.32, "change_pct": -0.315925, "freshness": "current"},
+    "WTI": {"symbol": "WTI", "close": 96.41, "change": -0.56, "change_pct": -0.577498, "latest_observation_date": "2026-09-22", "freshness": "lagging"},
+    "US10Y": {"symbol": "US10Y", "close": 5.18, "change": 0.07, "change_pct": 1.369863, "change_bps": 7.0, "latest_observation_date": "2026-09-24", "freshness": "lagging"}
+  },
+  "movers": {
+    "top_gainers": [{"symbol": "PYPL", "company_name": "PayPal Holdings Inc.", "close": 100.0, "change_pct": 4.638785, "catalyst": {"catalyst_status": "NOT_CONFIRMED"}}],
+    "top_losers": [{"symbol": "PANW", "company_name": "Palo Alto Networks Inc.", "close": 200.0, "change_pct": -3.893111}]
+  },
+  "verified_stories": [],
+  "unconfirmed_leads": [{"symbol": "PYPL", "status": "NOT_CONFIRMED", "display_in_public_report": false}],
+  "notable_moves": [{"type": "STOCK_MOVER", "symbol": "PYPL", "value": 4.638785, "threshold": 3.0}],
+  "data_quality": {"warnings": ["MACRO_DATA_LAGGING"], "macro_lagging_items": ["WTI", "US10Y"]},
+  "publication_readiness": {"status": "READY_WITH_WARNINGS", "reasons": ["MACRO_DATA_LAGGING"]}
+}

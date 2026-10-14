@@ -1,0 +1,61 @@
+{
+  "thresholds": {
+    "sector_move_pct": 1.0,
+    "market_move_pct": 0.75,
+    "vix_move_pct": 8.0,
+    "rates_change_bps": 3.0,
+    "oil_move_pct": 1.0
+  },
+  "provider_priority": ["marketaux", "finnhub"],
+  "sector_aliases": {
+    "XLK": "TECHNOLOGY",
+    "XLF": "FINANCIALS",
+    "XLE": "ENERGY",
+    "XLC": "COMMUNICATION_SERVICES",
+    "SMH": "SEMICONDUCTORS"
+  },
+  "company_aliases": {
+    "BA": {
+      "name": "Boeing",
+      "aliases": ["Boeing", "BA"],
+      "products": ["737", "737 MAX", "MAX 10", "787", "777X", "Starliner"]
+    }
+  },
+  "event_concepts": {
+    "737_MAX": ["737", "737 max", "max 10", "max10"],
+    "STARLINER": ["starliner"],
+    "UNION_AGREEMENT": ["union", "collective bargaining", "labor agreement"],
+    "ANALYST_UPGRADE": ["upgraded", "downgraded", "analyst", "price target", "ubs calls"],
+    "AIRCRAFT_ORDER": ["aircraft order", "orders", "acquires", "acquisition", "buys", "purchase"],
+    "DELIVERY": ["delivery", "deliveries", "delivered"],
+    "PRODUCTION": ["production", "manufacturing", "factory"],
+    "GUIDANCE": ["guidance", "outlook"],
+    "EARNINGS": ["earnings", "revenue", "profit", "quarterly results"],
+    "SOFTWARE_GLITCH": ["software glitch", "software issue", "software problem", "navigation issue", "landing software"],
+    "CERTIFICATION_DELAY": ["certification delay", "certification delayed", "certification", "cert", "approval delay", "halts certification"],
+    "REGULATORY_REVIEW": ["faa", "sec", "doj", "ftc", "fda", "regulator", "investigation", "regulatory"]
+  },
+  "event_clustering": {
+    "event_window_hours": 72,
+    "minimum_coherence_score": 0.55
+  },
+  "sectors": {
+    "SEMICONDUCTORS": ["NVDA", "AMD", "AVGO", "QCOM", "MU", "AMAT", "LRCX", "INTC"],
+    "ENERGY": ["XOM", "CVX", "COP", "EOG", "OXY", "SLB", "HAL"],
+    "TECHNOLOGY": ["AAPL", "MSFT", "NVDA", "AVGO", "AMD", "ORCL"],
+    "FINANCIALS": ["JPM", "BAC", "GS", "MS", "V", "MA"],
+    "COMMUNICATION_SERVICES": ["GOOGL", "GOOG", "META", "NFLX", "DIS"]
+  },
+  "sector_evidence_terms": {
+    "ENERGY": ["energy sector", "oil producers", "crude oil", "crude retreats", "oil prices", "energy stocks"],
+    "TECHNOLOGY": ["technology stocks", "technology sector", "tech stocks", "tech sector"],
+    "SEMICONDUCTORS": ["semiconductor stocks", "semiconductor sector", "chip demand", "chipmakers", "semiconductor demand"]
+  },
+  "sector_theme_associations": {
+    "TECHNOLOGY": {
+      "SEMICONDUCTORS": {
+        "evidence_terms": ["semiconductor stocks", "semiconductor sector", "chip demand", "chipmakers", "semiconductor demand"]
+      }
+    }
+  }
+}

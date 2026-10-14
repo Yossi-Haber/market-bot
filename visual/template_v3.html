@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head><meta charset="utf-8"><meta name="viewport" content="width=1080"><title>{{title}}</title><style>{{styles}}</style></head>
+<body>
+<main class="poster-v3" data-section="card">
+  <header class="hero-v3" data-section="header">
+    <div class="hero-copy"><div class="brand-line"><span class="brand-mark">MB</span><span>MARKET BOT / DAILY INTELLIGENCE</span><time>{{market_date}}</time></div><div class="kicker">סגירת המסחר בארה״ב <b>{{tone}}</b></div><div class="headline-lockup"><i></i><h1>{{headline}}</h1></div><p>{{subheadline}}</p><div class="hero-foot"><span>תמונת מצב יומית</span><span>מקור: {{source}}</span></div></div>
+    <div class="hero-art">{{hero_visual}}<span class="art-caption">MARKET<br>SESSION</span></div>
+  </header>
+  <section class="market-strip" data-section="market-strip"><div class="section-top"><h2>המדדים המרכזיים</h2><span>ארה״ב · סגירה יומית</span></div><div class="market-tiles">{{market_tiles}}</div></section>
+  <section class="main-grid" data-section="feature">
+    <article class="feature-story">{{story}}</article>
+    <aside class="side-rail">
+      <section class="brief-block" data-section="breadth"><div class="section-top"><h2>רוחב השוק</h2><span>סקטורים</span></div><div class="breadth-number">{{breadth}}</div><div class="breadth-bar"><i></i></div><p>השתתפות הסקטורים מגדירה את איכות המהלך.</p></section>
+      <section class="brief-block drivers" data-section="sectors"><div class="section-top"><h2>סקטורים בולטים</h2><span>TOP / BOTTOM</span></div><div class="sector-list">{{sectors}}</div></section>
+    </aside>
+  </section>
+  <section class="lower-grid">
+    <section class="macro-panel" data-section="macro"><div class="section-top"><h2>מאקרו</h2><span>תמונת מצב</span></div><div class="macro-grid">{{macro}}</div><div class="panel-note">הנתונים מוצגים לפי זמינות הפרסום האחרונה</div></section>
+    <section class="movers-panel" data-section="movers"><div class="section-top"><h2>מניות בתנועה</h2><span>מובילות / מפגרות</span></div><div class="movers-columns"><div class="mover-group gainers"><small class="positive-label">GAINERS <b>עליות</b></small><ul>{{gainers}}</ul></div><div class="mover-group losers"><small class="negative-label">LOSERS <b>ירידות</b></small><ul>{{losers}}</ul></div></div><div class="panel-note">מניות בולטות מתוך נתוני הסגירה הזמינים</div></section>
+  </section>
+  <footer class="footer-v3" data-section="footer"><span>סיכום שוק יומי · {{market_date}}</span><span>{{readiness}} · {{story_count_label}}</span><span>{{warnings}}</span></footer>
+</main>
+</body></html>

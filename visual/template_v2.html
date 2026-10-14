@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head><meta charset="utf-8"><meta name="viewport" content="width=1080"><title>{{title}}</title><style>{{styles}}</style></head>
+<body><main class="card">
+  <header data-section="header" class="hero"><div class="brand">MARKET BOT <span>DAILY EDITION</span></div><div class="hero-meta"><span>{{market_date}}</span><b>{{tone}}</b></div><h1>{{headline}}</h1><p>{{subheadline}}</p></header>
+  <section data-section="core" class="core-zone"><div class="section-head"><h2>המדדים המרכזיים</h2><span>סגירת המסחר</span></div><div class="index-grid">{{indices}}</div></section>
+  <div class="upper-grid"><section data-section="breadth" class="panel breadth-panel"><div class="section-head"><h2>רוחב השוק</h2><strong>{{breadth}}</strong></div><div class="breadth-bar"><i style="width:{{breadth_positive}}0%"></i></div><small>התמונה הרחבה של הסקטורים</small></section><section data-section="drivers" class="panel drivers"><div class="section-head"><h2>מה הניע את השוק היום</h2><span>תמצית</span></div><ul>{{drivers}}</ul></section></div>
+  <section data-section="stories" class="panel stories-panel"><div class="section-head"><h2>הסיפורים החשובים</h2><span>אירועים מאומתים בלבד</span></div><div class="stories-grid {{story_grid_class}}">{{stories}}</div></section>
+  <div class="split-grid"><section data-section="sectors" class="panel"><div class="section-head"><h2>הובלה סקטוריאלית</h2></div><h3 class="group-title positive-text">מובילים</h3>{{top_sectors}}<h3 class="group-title negative-text">חלשים</h3>{{bottom_sectors}}</section><section data-section="macro" class="panel"><div class="section-head"><h2>מאקרו</h2><span>כיוון יומי</span></div><div class="macro-grid">{{macro}}</div></section></div>
+  <section data-section="movers" class="panel movers"><div class="section-head"><h2>מניות בולטות</h2></div><div class="mover-grid"><div><h3 class="group-title positive-text">עולות</h3><ul>{{gainers}}</ul></div><div><h3 class="group-title negative-text">יורדות</h3><ul>{{losers}}</ul></div></div></section>
+  <footer data-section="footer"><span>סטטוס פרסום: <b>{{readiness}}</b></span><div class="warnings">{{warnings}}</div></footer>
+</main></body></html>

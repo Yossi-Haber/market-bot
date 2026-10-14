@@ -1,0 +1,12 @@
+{
+  "MCHP": {"company_name": "Microchip Technology", "ir_url": "https://investor.microchip.com/", "press_release_url": "https://investor.microchip.com/news-releases"},
+  "CVS": {"company_name": "CVS Health Corporation", "ir_url": "https://investors.cvshealth.com/", "press_release_url": "https://investors.cvshealth.com/news/news-details"},
+  "PYPL": {"company_name": "PayPal Holdings Inc.", "ir_url": "https://investor.pypl.com/", "press_release_url": "https://investor.pypl.com/news-and-events/news-releases"},
+  "HUM": {"company_name": "Humana Inc.", "ir_url": "https://investors.humana.com/", "press_release_url": "https://investors.humana.com/news/news-releases"},
+  "BKNG": {"company_name": "Booking Holdings Inc.", "ir_url": "https://ir.bookingholdings.com/", "press_release_url": "https://ir.bookingholdings.com/news-releases"},
+  "PANW": {"company_name": "Palo Alto Networks Inc.", "ir_url": "https://investors.paloaltonetworks.com/", "press_release_url": "https://investors.paloaltonetworks.com/news-releases"},
+  "META": {"company_name": "Meta Platforms Inc.", "ir_url": "https://investor.atmeta.com/", "press_release_url": "https://investor.atmeta.com/news/"},
+  "EQIX": {"company_name": "Equinix Inc.", "ir_url": "https://investor.equinix.com/", "press_release_url": "https://investor.equinix.com/news-releases"},
+  "OXY": {"company_name": "Occidental Petroleum", "ir_url": "https://www.oxy.com/investors/", "press_release_url": "https://www.oxy.com/news/"},
+  "CRM": {"company_name": "Salesforce Inc.", "ir_url": "https://investor.salesforce.com/", "press_release_url": "https://investor.salesforce.com/press-releases/default.aspx"}
+}

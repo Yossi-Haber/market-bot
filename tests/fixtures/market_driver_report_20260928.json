@@ -1,0 +1,7 @@
+{
+  "market_date": "2026-09-28",
+  "market": {"core": {"SPY": {"change_pct": 0.4}, "QQQ": {"change_pct": 0.5}, "DIA": {"change_pct": 0.2}, "IWM": {"change_pct": 0.1}}},
+  "macro": {},
+  "sectors": {"all": []},
+  "movers": {"top_gainers": [], "top_losers": []}
+}

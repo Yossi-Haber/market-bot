@@ -1,0 +1,8 @@
+{
+  "RISING_YIELDS": {"negative": ["XLRE", "XLU", "XLK"]},
+  "FALLING_YIELDS": {"positive": ["XLRE", "XLU", "XLK"]},
+  "OIL_RALLY": {"positive": ["XLE"]},
+  "OIL_SHOCK_UP": {"positive": ["XLE"]},
+  "USD_RALLY": {"negative": ["XLK", "XLC"]},
+  "VOLATILITY_SPIKE": {"negative": ["XLK", "XLF", "XLY"]}
+}
