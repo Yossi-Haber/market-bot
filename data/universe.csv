@@ -1,0 +1,126 @@
+symbol,company_name,universe_sp500,universe_nasdaq100
+AAPL,Apple Inc.,true,true
+MSFT,Microsoft Corporation,true,true
+NVDA,NVIDIA Corporation,true,true
+AMZN,Amazon.com Inc.,true,true
+GOOGL,Alphabet Inc. Class A,true,true
+GOOG,Alphabet Inc. Class C,true,true
+META,Meta Platforms Inc.,true,true
+AVGO,Broadcom Inc.,true,true
+TSLA,Tesla Inc.,true,true
+BRK.B,Berkshire Hathaway Class B,true,false
+JPM,JPMorgan Chase & Co.,true,false
+LLY,Eli Lilly and Company,true,true
+V,Visa Inc.,true,true
+XOM,Exxon Mobil Corporation,true,false
+UNH,UnitedHealth Group,true,false
+MA,Mastercard Incorporated,true,true
+COST,Costco Wholesale Corporation,true,true
+HD,The Home Depot Inc.,true,false
+PG,Procter & Gamble Company,true,false
+JNJ,Johnson & Johnson,true,false
+ABBV,AbbVie Inc.,true,false
+CRM,Salesforce Inc.,true,true
+NFLX,Netflix Inc.,true,true
+AMD,Advanced Micro Devices Inc.,true,true
+ORCL,Oracle Corporation,true,true
+CVX,Chevron Corporation,true,false
+KO,Coca-Cola Company,true,false
+MRK,Merck & Co. Inc.,true,false
+BAC,Bank of America Corporation,true,false
+PEP,PepsiCo Inc.,true,false
+TMO,Thermo Fisher Scientific Inc.,true,false
+WMT,Walmart Inc.,true,true
+ACN,Accenture plc,true,false
+MCD,McDonald's Corporation,true,false
+CSCO,Cisco Systems Inc.,true,true
+IBM,International Business Machines,true,false
+LIN,Linde plc,true,false
+GE,GE Aerospace,true,false
+CAT,Caterpillar Inc.,true,false
+RTX,RTX Corporation,true,false
+PM,Philip Morris International,true,false
+ABT,Abbott Laboratories,true,false
+AMGN,Amgen Inc.,true,true
+GS,Goldman Sachs Group Inc.,true,false
+NEE,NextEra Energy Inc.,true,false
+UBER,Uber Technologies Inc.,true,true
+NOW,ServiceNow Inc.,true,true
+INTU,Intuit Inc.,true,true
+ISRG,Intuitive Surgical Inc.,true,true
+ADI,Analog Devices Inc.,true,true
+TXN,Texas Instruments Incorporated,true,true
+QCOM,QUALCOMM Incorporated,true,true
+AMAT,Applied Materials Inc.,true,true
+MU,Micron Technology Inc.,true,true
+PANW,Palo Alto Networks Inc.,true,true
+BKNG,Booking Holdings Inc.,true,true
+REGN,Regeneron Pharmaceuticals,true,true
+GILD,Gilead Sciences Inc.,true,true
+SBUX,Starbucks Corporation,true,true
+MDLZ,Mondelez International,true,false
+CME,CME Group Inc.,true,false
+BLK,BlackRock Inc.,true,false
+SCHW,Charles Schwab Corporation,true,false
+PLD,Prologis Inc.,true,false
+C,Citigroup Inc.,true,false
+SPGI,S&P Global Inc.,true,false
+MMC,Marsh McLennan,true,false
+SYK,Stryker Corporation,true,false
+LRCX,Lam Research Corporation,true,true
+KLAC,KLA Corporation,true,true
+SNPS,Synopsys Inc.,true,true
+CDNS,Cadence Design Systems,true,true
+PYPL,PayPal Holdings Inc.,true,true
+PFE,Pfizer Inc.,true,false
+BMY,Bristol-Myers Squibb,true,false
+T,AT&T Inc.,true,false
+VZ,Verizon Communications,true,false
+LOW,Lowes Companies Inc.,true,false
+UPS,United Parcel Service,true,false
+DE,Deere & Company,true,false
+COP,ConocoPhillips,true,false
+SLB,Schlumberger Limited,true,false
+EOG,EOG Resources Inc.,true,false
+OXY,Occidental Petroleum,true,false
+SO,Southern Company,true,false
+DUK,Duke Energy Corporation,true,false
+CEG,Constellation Energy,true,true
+NOC,Northrop Grumman,true,false
+LMT,Lockheed Martin,true,false
+BA,Boeing Company,true,false
+F,Ford Motor Company,true,false
+GM,General Motors,true,false
+TGT,Target Corporation,true,false
+CVS,CVS Health Corporation,true,false
+CI,Cigna Group,true,false
+ELV,Elevance Health,true,false
+ZTS,Zoetis Inc.,true,false
+MAR,Marriott International,true,false
+ABNB,Airbnb Inc.,true,true
+DASH,DoorDash Inc.,true,true
+PDD,PDD Holdings,true,false
+JD,JD.com,true,false
+MELI,MercadoLibre Inc.,true,true
+ADBE,Adobe Inc.,true,true
+CSX,CSX Corporation,true,false
+NSC,Norfolk Southern,true,false
+FDX,FedEx Corporation,true,false
+ETN,Eaton Corporation,true,false
+EMR,Emerson Electric,true,false
+PH, Parker-Hannifin Corporation,true,false
+MMM,3M Company,true,false
+HUM,Humana Inc.,true,false
+MO,Altria Group,true,false
+KMI, Kinder Morgan,true,false
+WELL,Welltower Inc.,true,false
+EQIX,Equinix Inc.,true,false
+ORLY,O'Reilly Automotive,true,true
+AZO,AutoZone Inc.,true,true
+MRVL,Marvell Technology,true,true
+MCHP,Microchip Technology,true,true
+FTNT,Fortinet Inc.,true,true
+ROP,Roper Technologies,true,false
+FIS,Fidelity National Information Services,true,false
+ADP,Automatic Data Processing,true,false
+PAYX,Paychex Inc.,true,false

@@ -44,11 +44,16 @@ def test_v2_validation_contract_uses_moderate_tall_canvas():
     assert len(V2_SECTIONS) == 9
 
 
-def test_current_v2_artifact_passes_validation_and_footer_is_in_bounds():
+def test_generated_v2_fixture_passes_validation_and_footer_is_in_bounds(tmp_path):
     from visual.validate_v2 import validate_visual_report_v2
+    from visual.screenshot import export_png
+    html_path = tmp_path / "daily_report_card_v2.html"
+    png_path = tmp_path / "daily_report_card_v2.png"
+    html_path.write_text(render_html_v2(model()), encoding="utf-8")
+    export_png(html_path, png_path, height=1600)
     result = validate_visual_report_v2(
-        Path(__file__).parent.parent / "output" / "daily_report_card_v2.html",
-        Path(__file__).parent.parent / "output" / "daily_report_card_v2.png",
+        html_path,
+        png_path,
     )
     assert result["valid"], result["errors"]
     assert result["sections"]["footer"] is True

@@ -1,7 +1,6 @@
 """Offline structural validation tests for the visual publish artifact."""
 
 import json
-import shutil
 import struct
 from pathlib import Path
 
@@ -11,17 +10,8 @@ from visual.screenshot import export_png
 
 
 ROOT = Path(__file__).resolve().parent.parent
-OUTPUT = ROOT / "output"
-
-
 def copy_inputs(tmp_path):
-    paths = {}
-    for name in ("daily_report_card.html", "daily_report_card.png", "daily_report_data.json", "daily_report_final.md", "daily_report_selection.json"):
-        destination = tmp_path / name
-        shutil.copy2(OUTPUT / name, destination)
-        paths[name] = destination
-    paths["manifest.json"] = tmp_path / "manifest.json"
-    return paths
+    return render_explicit_fixture(tmp_path)
 
 
 def validate(paths):
@@ -34,7 +24,8 @@ def render_explicit_fixture(tmp_path):
     markdown = "## תמונת מצב\nתנודתיות מתונה."
     selection = {"selected_source": "DETERMINISTIC"}
     html_path, png_path = tmp_path / "daily_report_card.html", tmp_path / "daily_report_card.png"
-    html_path.write_text(render_html(build_view_model(data, markdown, selection)), encoding="utf-8")
+    view_model = build_view_model(data, markdown, selection)
+    html_path.write_text(render_html(view_model), encoding="utf-8")
     export_png(html_path, png_path, height=1350)
     data_path = tmp_path / "daily_report_data.json"
     data_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -42,7 +33,8 @@ def render_explicit_fixture(tmp_path):
     md_path.write_text(markdown, encoding="utf-8")
     selection_path = tmp_path / "daily_report_selection.json"
     selection_path.write_text(json.dumps(selection), encoding="utf-8")
-    return {"daily_report_card.html": html_path, "daily_report_card.png": png_path, "daily_report_data.json": data_path, "daily_report_final.md": md_path, "daily_report_selection.json": selection_path, "manifest.json": tmp_path / "manifest.json"}
+    lagging_marker = next(item["date_note"] for item in view_model["macro"] if item["symbol"] == "WTI")
+    return {"daily_report_card.html": html_path, "daily_report_card.png": png_path, "daily_report_data.json": data_path, "daily_report_final.md": md_path, "daily_report_selection.json": selection_path, "manifest.json": tmp_path / "manifest.json", "lagging_marker": lagging_marker}
 
 
 def test_current_visual_card_passes(tmp_path):
@@ -89,6 +81,6 @@ def test_private_leakage_fails(tmp_path):
 
 def test_missing_lagging_date_fails(tmp_path):
     paths = copy_inputs(tmp_path)
-    html = paths["daily_report_card.html"].read_text(encoding="utf-8").replace("22.09.2026", "")
+    html = paths["daily_report_card.html"].read_text(encoding="utf-8").replace(paths["lagging_marker"], "")
     paths["daily_report_card.html"].write_text(html, encoding="utf-8")
     assert "MISSING_LAGGING_DATE:WTI" in validate(paths)["errors"]

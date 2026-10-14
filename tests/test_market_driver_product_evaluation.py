@@ -82,7 +82,7 @@ def test_output_writer_serializes_nested_news_candidate_and_primitives(tmp_path)
     assert loaded["days"][0]["nested"]["candidate"]["title"] == "FAA delays Boeing certification"
     assert loaded["days"][0]["nested"]["candidate"]["raw_metadata"]["observed_at"] == "2026-09-28T12:00:00+00:00"
     assert loaded["enum"] == "PLAUSIBLE_NOT_VERIFIED"
-    assert loaded["path"].endswith("cache\\finnhub\\BA.json")
+    assert Path(loaded["path"]).as_posix().endswith("cache/finnhub/BA.json")
     assert "FAA delays Boeing certification" in (tmp_path / "evaluation" / "market_driver_multiday.md").read_text(encoding="utf-8")
 
 

@@ -104,7 +104,7 @@ def test_json_serializer_handles_nested_finnhub_candidate_trace():
     encoded = json.dumps(safe, ensure_ascii=False)
     assert "FAA / MAX certification" in encoded
     assert safe["trace"]["top_cluster"]["articles"][0]["title"].startswith("FAA delays")
-    assert safe["trace"]["cache_path"] == "cache\\finnhub\\BA\\window.json"
+    assert Path(safe["trace"]["cache_path"]).as_posix() == "cache/finnhub/BA/window.json"
 
 
 def _verification_candidate():

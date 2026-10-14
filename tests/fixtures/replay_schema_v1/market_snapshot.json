@@ -1,0 +1,13 @@
+{
+  "market_date": "FIXTURE_DATE",
+  "market": {
+    "core": {
+      "SPY": {"close": 100.0, "change_pct": 0.1},
+      "QQQ": {"close": 100.0, "change_pct": 0.1},
+      "DIA": {"close": 100.0, "change_pct": 0.1},
+      "IWM": {"close": 100.0, "change_pct": 0.1}
+    },
+    "macro": {},
+    "sectors": {"all": [], "top": [], "bottom": [], "valid_count": 0}
+  }
+}

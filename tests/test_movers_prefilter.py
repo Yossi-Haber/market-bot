@@ -1,5 +1,6 @@
 import json
 import logging
+import csv
 from datetime import date, datetime, time, timezone
 
 import pytest
@@ -93,6 +94,19 @@ def test_benchmark_history_writing_and_analyzer(tmp_path):
 def test_production_flag_is_explicitly_unchanged():
     benchmark = build_benchmark("2026-09-25", _universe(), _true_results(), _discovery_results(), {"http_requests": 50})
     assert benchmark["production_unchanged"] is True
+
+
+def test_production_universe_matches_versioned_csv_order():
+    from movers import UNIVERSE_PATH
+
+    with UNIVERSE_PATH.open("r", encoding="utf-8", newline="") as handle:
+        source_rows = list(csv.DictReader(handle))
+    loaded = load_universe()
+    assert len(source_rows) == 125
+    assert len(loaded) == 120
+    assert [(item.symbol, item.display_name) for item in loaded] == [
+        (row["symbol"].strip().upper(), row["company_name"].strip()) for row in source_rows[:120]
+    ]
 
 
 def _chart_payload(dates, closes, timezone_name="America/New_York"):
