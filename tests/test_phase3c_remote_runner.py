@@ -308,7 +308,26 @@ def test_targeted_postcondition_failure_reports_safe_context_and_masks_id(monkey
 
 def test_reconciled_remote_baseline_allows_only_the_confirmed_prior_reservation(tmp_path, monkeypatch):
     record_path = tmp_path / "reconciled_operations.json"
-    record_path.write_text((ROOT / "output/qa/github_actions_migration_phase3c/reconciled_operations.json").read_text(encoding="utf-8"), encoding="utf-8")
+    # This is a deterministic synthetic copy of the user-confirmed TEST D1
+    # reconciliation record. Tests must not depend on ignored local QA output.
+    record_path.write_text(json.dumps({
+        "source": "user-confirmed direct read-only query against TEST D1",
+        "target": {
+            "worker": runner.TEST_WORKER_NAME,
+            "database": "marketbot-test",
+            "database_id": runner.TEST_DATABASE_ID,
+        },
+        "operations": [{
+            "operation_id": "3c57c52fcc8083b8a2944752c9b3d40d",
+            "operation_type": "quota.reserve",
+            "status": "COMMITTED",
+            "reservation_exists": True,
+            "credits": 1,
+            "utc_day": "2026-10-14",
+            "utc_minute": "2026-10-14T21:25Z",
+            "reconciled": True,
+        }],
+    }), encoding="utf-8")
     monkeypatch.setattr(runner, "RECONCILED_OPERATIONS_FILE", record_path)
     empty_preflight = {
         "schema_version": 1,
