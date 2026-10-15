@@ -62,6 +62,10 @@ def run(argv: list[str] | None = None, *, now: datetime | None = None) -> int:
             start_date=str(state["created_at"])[:10],
         )
     except Exception as exc:
+        if isinstance(exc, MarketCalendarError) and str(exc) == "LATEST_COMPLETED_SESSION_ALREADY_CLAIMED" and not args.market_date:
+            _write_manifest({"status": "NO_NEW_TRADING_SESSION", "reason": str(exc), "provider_calls": 0, "telegram_sends": 0})
+            print("CLOUD_NOOP: no unclaimed completed NYSE session")
+            return 0
         if not isinstance(exc, (StateUnavailable, MarketCalendarError)) and type(exc).__name__ != "D1StateError":
             raise
         _write_manifest({"status": "BLOCKED", "reason": str(exc), "mode": "DRY_RUN" if args.dry_run else "EXECUTE"})
@@ -86,6 +90,10 @@ def run(argv: list[str] | None = None, *, now: datetime | None = None) -> int:
     if args.send_telegram and os.getenv("MARKETBOT_CLOUD_TELEGRAM_ENABLED") != "1":
         _write_manifest({"status": "BLOCKED", "market_date": date_key, "reason": "CLOUD_TELEGRAM_DISABLED"})
         print("CLOUD_EXECUTION_BLOCKED: CLOUD_TELEGRAM_DISABLED")
+        return 1
+    if args.send_telegram and state["ownership"].get("cloud_delivery_enabled") is not True:
+        _write_manifest({"status": "BLOCKED", "market_date": date_key, "reason": "CLOUD_DELIVERY_OWNERSHIP_NOT_EXCLUSIVE"})
+        print("CLOUD_EXECUTION_BLOCKED: CLOUD_DELIVERY_OWNERSHIP_NOT_EXCLUSIVE")
         return 1
 
     prior = state["runs"].get(date_key)

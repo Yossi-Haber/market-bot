@@ -75,6 +75,46 @@ def test_cloud_execute_refuses_until_windows_and_quota_ownership_are_exclusive(s
     assert GitHubStateStore(repo).read(fetch=True)["runs"] == {}
 
 
+def test_cloud_telegram_execute_refuses_before_claim_when_delivery_gate_is_closed(state_repos, tmp_path, monkeypatch):
+    import run_daily_cloud
+    from persistence.github_state import GitHubStateStore
+
+    _, repo, _ = state_repos
+    store = GitHubStateStore(repo)
+    store.update(lambda state: (state.update({"created_at": "2026-10-13T00:00:00+00:00"}), state["ownership"].update({"cloud_quota_exclusive": True, "windows_sender_disabled": True, "cloud_delivery_enabled": False})))
+    monkeypatch.setenv("MARKETBOT_STATE_REPO", str(repo))
+    monkeypatch.setenv("MARKETBOT_CLOUD_LIVE_ENABLED", "1")
+    monkeypatch.setenv("MARKETBOT_CLOUD_TELEGRAM_ENABLED", "1")
+    monkeypatch.setattr(run_daily_cloud, "MANIFEST_DIR", tmp_path)
+    monkeypatch.setattr(run_daily_cloud, "OUTPUT_DIR", tmp_path)
+
+    result = run_daily_cloud.run(["--execute", "--send-telegram", "--market-date", "2026-10-14"], now=datetime(2026, 10, 14, 21, tzinfo=timezone.utc))
+
+    assert result == 1
+    assert "CLOUD_DELIVERY_OWNERSHIP_NOT_EXCLUSIVE" in (tmp_path / "latest.json").read_text(encoding="utf-8")
+    assert store.read(fetch=True)["runs"] == {}
+
+
+def test_cloud_scheduled_no_new_session_is_clean_noop(state_repos, tmp_path, monkeypatch, capsys):
+    import run_daily_cloud
+    from persistence.github_state import GitHubStateStore
+
+    _, repo, _ = state_repos
+    store = GitHubStateStore(repo)
+    completed = {day: {"status": "COMPLETE", "run_id": (str(index) * 32)} for index, day in enumerate(("2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16"), start=1)}
+    store.update(lambda state: state.update({"created_at": "2026-10-13T00:00:00+00:00", "runs": completed}))
+    monkeypatch.setenv("MARKETBOT_STATE_REPO", str(repo))
+    monkeypatch.setattr(run_daily_cloud, "MANIFEST_DIR", tmp_path)
+    monkeypatch.setattr(run_daily_cloud, "OUTPUT_DIR", tmp_path)
+
+    # Weekend: the latest completed session has already been processed.
+    result = run_daily_cloud.run(["--dry-run"], now=datetime(2026, 10, 17, 16, tzinfo=timezone.utc))
+
+    assert result == 0
+    assert "CLOUD_NOOP" in capsys.readouterr().out
+    assert '"status": "NO_NEW_TRADING_SESSION"' in (tmp_path / "latest.json").read_text(encoding="utf-8")
+
+
 def test_crashed_inflight_cloud_send_is_recovered_as_unknown_not_retried(state_repos, tmp_path, monkeypatch):
     import run_daily_cloud
     from persistence.github_state import GitHubStateStore
@@ -100,3 +140,32 @@ def test_crashed_inflight_cloud_send_is_recovered_as_unknown_not_retried(state_r
     recovered = GitHubStateStore(repo).read(fetch=True)
     assert recovered["runs"]["2026-10-14"]["status"] == "DELIVERY_UNKNOWN"
     assert recovered["deliveries"]["2026-10-14"]["recipients"][slot]["status"] == "UNKNOWN"
+
+
+def test_production_workflow_is_manual_gated_and_documents_ny_schedule():
+    from pathlib import Path
+
+    workflow = Path(__file__).resolve().parents[1] / ".github/workflows/marketbot-production.yml"
+    content = workflow.read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in content
+    assert "confirm_production_run:" in content
+    assert "send_telegram:" in content
+    assert "default: false" in content
+    assert "\non:\n  schedule:" not in content
+    assert 'cron "15 17 * * 1-5" in timezone "America/New_York"' in content
+    assert "cancel-in-progress: false" in content
+    assert "timeout-minutes: 120" in content
+    assert "permissions:\n  contents: read" in content
+    assert "run_daily_cloud.py --execute" in content
+    assert "run_daily_cloud.py --execute --send-telegram" in content
+    assert "github.ref == 'refs/heads/main'" in content
+    assert "vars.MARKETBOT_CLOUD_SCHEDULE_ENABLED == '1'" in content
+    assert "vars.MARKETBOT_CLOUD_LIVE_ENABLED || '0'" in content
+    assert "vars.MARKETBOT_CLOUD_TELEGRAM_ENABLED || '0'" in content
+    assert "MARKETBOT_D1_STATE_ADMIN_HMAC_SECRET" not in content
+    for secret_name in (
+        "TWELVE_DATA_API_KEY", "FINNHUB_API_KEY", "FRED_API_KEY",
+        "MARKETBOT_D1_STATE_HMAC_SECRET", "OPENAI_API_KEY", "MARKETAUX_API_TOKEN",
+        "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_IDS", "TELEGRAM_RECIPIENT_ID_HMAC_KEY",
+    ):
+        assert f"secrets.{secret_name}" in content

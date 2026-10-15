@@ -1,0 +1,158 @@
+name: Market Bot Production (manual until cutover)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_production_run:
+        description: "Explicitly authorize one cloud production run (requires cutover variables and open D1 ownership gates)."
+        type: boolean
+        required: true
+        default: false
+      send_telegram:
+        description: "Send this report through the D1-protected Telegram ledger. Requires separate delivery approval."
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: marketbot-production
+  cancel-in-progress: false
+
+# Scheduling is intentionally not enabled before the separately approved cutover.
+# Future approved schedule: cron "15 17 * * 1-5" in timezone "America/New_York".
+# The scheduled job path also requires MARKETBOT_CLOUD_SCHEDULE_ENABLED=1.
+
+jobs:
+  production:
+    if: ${{ github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.confirm_production_run == true) || (github.event_name == 'schedule' && vars.MARKETBOT_CLOUD_SCHEDULE_ENABLED == '1')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      TZ: America/New_York
+      LANG: en_US.UTF-8
+      MARKETBOT_STATE_BACKEND: d1
+      MARKETBOT_D1_STATE_URL: https://marketbot-state-api.yossihabar1994.workers.dev
+      MARKETBOT_CLOUD_LIVE_ENABLED: ${{ vars.MARKETBOT_CLOUD_LIVE_ENABLED || '0' }}
+      MARKETBOT_CLOUD_TELEGRAM_ENABLED: ${{ vars.MARKETBOT_CLOUD_TELEGRAM_ENABLED || '0' }}
+      ENABLE_LLM: ${{ vars.ENABLE_LLM || 'false' }}
+      LLM_PROVIDER: openai
+      LLM_MODEL: ${{ vars.LLM_MODEL || 'gpt-5.6-luna' }}
+      ENABLE_MARKETAUX: ${{ vars.ENABLE_MARKETAUX || 'false' }}
+      ENABLE_OFFICIAL_NEWS: "true"
+
+    steps:
+      - name: Checkout trusted default branch without persisted token
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install runtime, Chromium and Hebrew fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes fonts-noto-core fonts-liberation2 fontconfig
+          fc-cache --force
+          python -m pip install --disable-pip-version-check -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Require live cutover switch before exposing production credentials
+        env:
+          LIVE_SWITCH: ${{ vars.MARKETBOT_CLOUD_LIVE_ENABLED || '0' }}
+        shell: bash
+        run: |
+          if [[ "$LIVE_SWITCH" != "1" ]]; then
+            echo "CLOUD_PRODUCTION_DISABLED: set the reviewed repository variable only during approved cutover"
+            exit 1
+          fi
+
+      - name: Require Telegram delivery approval before delivery credentials are exposed
+        if: ${{ github.event_name == 'schedule' || inputs.send_telegram == true }}
+        env:
+          TELEGRAM_SWITCH: ${{ vars.MARKETBOT_CLOUD_TELEGRAM_ENABLED || '0' }}
+        shell: bash
+        run: |
+          if [[ "$TELEGRAM_SWITCH" != "1" ]]; then
+            echo "CLOUD_TELEGRAM_DISABLED: delivery requires separate cutover approval"
+            exit 1
+          fi
+
+      - name: Validate provider and D1 secrets without printing values
+        env:
+          TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MARKETAUX_API_TOKEN: ${{ secrets.MARKETAUX_API_TOKEN }}
+          MARKETBOT_D1_STATE_HMAC_SECRET: ${{ secrets.MARKETBOT_D1_STATE_HMAC_SECRET }}
+          LLM_ENABLED: ${{ vars.ENABLE_LLM || 'false' }}
+          MARKETAUX_ENABLED: ${{ vars.ENABLE_MARKETAUX || 'false' }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          required = ["TWELVE_DATA_API_KEY", "FINNHUB_API_KEY", "FRED_API_KEY", "MARKETBOT_D1_STATE_HMAC_SECRET"]
+          if os.environ.get("LLM_ENABLED", "false").lower() in {"1", "true", "yes", "on"}:
+              required.append("OPENAI_API_KEY")
+          if os.environ.get("MARKETAUX_ENABLED", "false").lower() in {"1", "true", "yes", "on"}:
+              required.append("MARKETAUX_API_TOKEN")
+          missing = [name for name in required if not os.environ.get(name, "").strip()]
+          if missing:
+              print("PRODUCTION_SECRET_MISSING: " + ",".join(missing))
+              raise SystemExit(1)
+          print("PRODUCTION_SECRET_PREFLIGHT=PASS")
+          PY
+
+      - name: Validate Telegram secrets without printing values
+        if: ${{ github.event_name == 'schedule' || inputs.send_telegram == true }}
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
+          TELEGRAM_RECIPIENT_ID_HMAC_KEY: ${{ secrets.TELEGRAM_RECIPIENT_ID_HMAC_KEY }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          missing = [name for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_IDS", "TELEGRAM_RECIPIENT_ID_HMAC_KEY") if not os.environ.get(name, "").strip()]
+          if missing or len(os.environ.get("TELEGRAM_RECIPIENT_ID_HMAC_KEY", "").encode()) < 32:
+              print("TELEGRAM_SECRET_PREFLIGHT_FAILED: " + ",".join(missing or ["TELEGRAM_RECIPIENT_ID_HMAC_KEY_TOO_SHORT"]))
+              raise SystemExit(1)
+          print("TELEGRAM_SECRET_PREFLIGHT=PASS")
+          PY
+
+      - name: Run shared daily pipeline with Telegram disabled
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.send_telegram != true }}
+        env:
+          MARKETBOT_CLOUD_TELEGRAM_ENABLED: "0"
+          TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MARKETAUX_API_TOKEN: ${{ secrets.MARKETAUX_API_TOKEN }}
+          MARKETBOT_D1_STATE_HMAC_SECRET: ${{ secrets.MARKETBOT_D1_STATE_HMAC_SECRET }}
+          TELEGRAM_ENABLED: "false"
+        run: python run_daily_cloud.py --execute
+
+      - name: Run shared daily pipeline with D1-protected Telegram delivery
+        if: ${{ github.event_name == 'schedule' || inputs.send_telegram == true }}
+        env:
+          MARKETBOT_CLOUD_TELEGRAM_ENABLED: ${{ vars.MARKETBOT_CLOUD_TELEGRAM_ENABLED || '0' }}
+          TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MARKETAUX_API_TOKEN: ${{ secrets.MARKETAUX_API_TOKEN }}
+          MARKETBOT_D1_STATE_HMAC_SECRET: ${{ secrets.MARKETBOT_D1_STATE_HMAC_SECRET }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
+          TELEGRAM_RECIPIENT_ID_HMAC_KEY: ${{ secrets.TELEGRAM_RECIPIENT_ID_HMAC_KEY }}
+          TELEGRAM_ENABLED: "true"
+        run: python run_daily_cloud.py --execute --send-telegram
