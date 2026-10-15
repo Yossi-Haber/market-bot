@@ -10,10 +10,15 @@ __pycache__/
 .venv/
 venv/
 env/
+node_modules/
+.wrangler/
 logs/
 output/
 secrets/
 credentials/
+/sec pass.txt
+/sec pass test.txt
+phase3c_cleanup_readback.txt
 *.log
 *.tmp
 *.temp

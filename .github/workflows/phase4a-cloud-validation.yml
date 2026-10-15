@@ -1,0 +1,135 @@
+name: Market Bot Phase 4A Cloud Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      validation_mode:
+        description: "Offline validation or one authenticated production state read"
+        type: choice
+        required: true
+        default: offline_validation
+        options:
+          - offline_validation
+          - production_state_readonly
+
+permissions:
+  contents: read
+
+concurrency:
+  group: marketbot-phase4a-cloud-validation
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      TZ: America/New_York
+      LANG: en_US.UTF-8
+      TWELVE_DATA_API_KEY: ""
+      OPENAI_API_KEY: ""
+      TELEGRAM_BOT_TOKEN: ""
+      TELEGRAM_CHAT_ID: ""
+      TELEGRAM_CHAT_IDS: ""
+      FINNHUB_API_KEY: ""
+      MARKETAUX_API_TOKEN: ""
+      FRED_API_KEY: ""
+      FMP_API_KEY: ""
+      MARKETBOT_CLOUD_LIVE_ENABLED: "0"
+      MARKETBOT_CLOUD_TELEGRAM_ENABLED: "0"
+      VALIDATION_MODE: ${{ inputs.validation_mode }}
+
+    steps:
+      - name: Checkout source without persisted token
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install Hebrew fonts and pinned dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes fonts-noto-core fonts-liberation2 fontconfig
+          fc-cache --force
+          python -m pip install --disable-pip-version-check -r requirements-dev.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Record sanitized runtime inventory
+        run: |
+          mkdir -p output/qa/github_actions_migration_phase4a
+          {
+            cat /etc/os-release
+            python --version
+            python -m pip freeze
+            python -m playwright --version
+            python -c 'from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(headless=True); print("Chromium=" + b.version); b.close(); p.stop()'
+            dpkg-query -W -f='${Package}=${Version}\n' fonts-noto-core fonts-liberation2 fontconfig
+            fc-match -f '%{family} | %{style} | %{file}\n' 'Noto Sans Hebrew'
+            fc-match -f '%{family} | %{style} | %{file}\n' 'Liberation Sans'
+          } > output/qa/github_actions_migration_phase4a/runtime_inventory.txt
+
+      - name: Run offline regression suite
+        if: inputs.validation_mode == 'offline_validation'
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest -q -ra -p tests.offline_network_guard 2>&1 | tee output/qa/github_actions_migration_phase4a/pytest_results.txt
+
+      - name: Render fixture report and Hebrew poster without providers
+        run: python validate_linux_compatibility.py --output-dir output/qa/github_actions_migration_phase4a/fixture
+
+      - name: Authenticated production Worker state read (no claims or providers)
+        if: inputs.validation_mode == 'production_state_readonly'
+        env:
+          MARKETBOT_STATE_BACKEND: d1
+          MARKETBOT_D1_STATE_URL: https://marketbot-state-api.yossihabar1994.workers.dev
+          MARKETBOT_D1_STATE_HMAC_SECRET: ${{ secrets.MARKETBOT_D1_STATE_HMAC_SECRET }}
+        run: python validate_cloud_state_readonly.py
+
+      - name: Create sanitized validation summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path("output/qa/github_actions_migration_phase4a")
+          fixture_path = root / "fixture" / "validation_result.json"
+          fixture = json.loads(fixture_path.read_text(encoding="utf-8")) if fixture_path.exists() else {}
+          visual = fixture.get("visual_validation", {})
+          pytest_path = root / "pytest_results.txt"
+          pytest_summary = next((line.strip() for line in reversed(pytest_path.read_text(encoding="utf-8").splitlines()) if " passed" in line or " failed" in line), "not run") if pytest_path.exists() else "not run"
+          summary = [
+              "# Market Bot Phase 4A Manual Cloud Validation",
+              "",
+              f"- Mode: {__import__('os').environ.get('VALIDATION_MODE', 'not specified')}",
+              f"- Pytest: {pytest_summary}",
+              f"- Fixture report date: {fixture.get('market_date', 'not generated')}",
+              f"- Poster: {visual.get('dimensions', 'not generated')}; RTL={visual.get('rtl', 'not generated')}; valid={visual.get('valid', 'not generated')}",
+              f"- External visual requests: {visual.get('external_requests', 'not generated')}",
+              f"- Fixture network calls: {fixture.get('network_calls', 'not generated')}; Telegram sent={fixture.get('telegram_sent', 'not generated')}",
+              "- Production state read, if selected, performs only signed state.get; Worker nonce bookkeeping is expected.",
+              "- Production providers, run claims, ownership changes, and Telegram delivery are disabled.",
+          ]
+          (root / "validation_summary.md").write_text("\n".join(summary) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload sanitized fixture and validation report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: marketbot-phase4a-validation
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            output/qa/github_actions_migration_phase4a/runtime_inventory.txt
+            output/qa/github_actions_migration_phase4a/pytest_results.txt
+            output/qa/github_actions_migration_phase4a/validation_summary.md
+            output/qa/github_actions_migration_phase4a/fixture/daily_report_card_v3.png
+            output/qa/github_actions_migration_phase4a/fixture/daily_report_v3_visual_validation.json
+            output/qa/github_actions_migration_phase4a/fixture/validation_result.json

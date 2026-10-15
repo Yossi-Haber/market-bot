@@ -319,7 +319,27 @@ def run(argv: list[str] | None = None) -> int:
                 print("DAILY RUN READY — TELEGRAM NOT SENT (DRY RUN)")
         else:
             stage = "TELEGRAM_DELIVERY"
-            delivery_code = _step(logger, 16, "Telegram delivery", lambda: run_delivery(output_dir=OUTPUT_DIR))
+            durable_delivery = None
+            if os.getenv("MARKETBOT_PERSISTENT_DELIVERY_MODE") == "1":
+                hmac_key = os.getenv("TELEGRAM_RECIPIENT_ID_HMAC_KEY", "")
+                if len(hmac_key.encode("utf-8")) < 32:
+                    raise PreflightFailure("CLOUD_DELIVERY_STATE_OR_HMAC_KEY_MISSING")
+                backend = os.getenv("MARKETBOT_STATE_BACKEND", "github").strip().lower()
+                if backend == "d1":
+                    from persistence.d1_client import D1DeliveryLedger, D1StateClient
+
+                    durable_delivery = D1DeliveryLedger(D1StateClient.from_env(), hmac_key)
+                elif backend == "github":
+                    from persistence.delivery_ledger import DeliveryLedger
+                    from persistence.github_state import GitHubStateStore
+
+                    state_repo = os.getenv("MARKETBOT_STATE_REPO", "").strip()
+                    if not state_repo:
+                        raise PreflightFailure("CLOUD_STATE_REPOSITORY_REQUIRED")
+                    durable_delivery = DeliveryLedger(GitHubStateStore(Path(state_repo)), hmac_key)
+                else:
+                    raise PreflightFailure("CLOUD_STATE_BACKEND_INVALID")
+            delivery_code = _step(logger, 16, "Telegram delivery", lambda: run_delivery(output_dir=OUTPUT_DIR, durable_ledger=durable_delivery))
             delivery = load_json(OUTPUT_DIR / "daily_report_delivery.json") if (OUTPUT_DIR / "daily_report_delivery.json").is_file() else {}
             telegram_status = str(delivery.get("status", "FAILED"))
             sent = telegram_status == "SENT"
@@ -429,6 +449,27 @@ def run_preflight(args: argparse.Namespace, logger: logging.Logger) -> None:
     if telegram_enabled:
         if not os.getenv("TELEGRAM_BOT_TOKEN", "").strip() or not os.getenv("TELEGRAM_CHAT_IDS", "").strip():
             raise PreflightFailure("TELEGRAM_CONFIG_MISSING")
+        if os.getenv("MARKETBOT_PERSISTENT_DELIVERY_MODE") == "1":
+            if len(os.getenv("TELEGRAM_RECIPIENT_ID_HMAC_KEY", "").encode("utf-8")) < 32:
+                raise PreflightFailure("TELEGRAM_RECIPIENT_HMAC_KEY_MISSING")
+        if os.getenv("MARKETBOT_PERSISTENT_DELIVERY_MODE") == "1" or os.getenv("MARKETBOT_PERSISTENT_QUOTA_MODE") == "1":
+            backend = os.getenv("MARKETBOT_STATE_BACKEND", "github").strip().lower()
+            try:
+                if backend == "d1":
+                    from persistence.d1_client import D1StateClient
+                    D1StateClient.from_env().read()
+                elif backend == "github":
+                    state_repo = os.getenv("MARKETBOT_STATE_REPO", "").strip()
+                    if not state_repo:
+                        raise PreflightFailure("CLOUD_STATE_REPOSITORY_REQUIRED")
+                    from persistence.github_state import GitHubStateStore, StateUnavailable
+                    GitHubStateStore(Path(state_repo)).read(fetch=False)
+                else:
+                    raise PreflightFailure("CLOUD_STATE_BACKEND_INVALID")
+            except PreflightFailure:
+                raise
+            except Exception as exc:
+                raise PreflightFailure(str(exc) if type(exc).__name__ in {"StateUnavailable", "D1StateError"} else "CLOUD_STATE_UNAVAILABLE") from None
     logger.info("[PREFLIGHT] Telegram config: %s", "OK" if telegram_enabled else "SKIPPED")
 
 

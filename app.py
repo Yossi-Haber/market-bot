@@ -256,7 +256,37 @@ def main(market_date_override: str | None = None, refresh_movers: bool = False, 
     api_key = os.getenv("TWELVE_DATA_API_KEY", "").strip()
     fred_api_key = os.getenv("FRED_API_KEY", "").strip()
     delay = max(0.0, float(os.getenv("TWELVE_DATA_REQUEST_DELAY_SECONDS", "0.25")))
-    rate_limiter = CreditRateLimitController()
+    reservation_callback = None
+    if os.getenv("MARKETBOT_PERSISTENT_QUOTA_MODE") == "1":
+        try:
+            backend = os.getenv("MARKETBOT_STATE_BACKEND", "github").strip().lower()
+            if backend == "d1":
+                from persistence.d1_client import D1QuotaLedger, D1StateClient
+
+                state_store = D1StateClient.from_env()
+                reservation_callback = D1QuotaLedger(state_store).reserve
+            elif backend == "github":
+                from persistence.github_state import GitHubStateStore, StateUnavailable
+                from persistence.quota_ledger import QuotaLedger
+
+                state_path = os.getenv("MARKETBOT_STATE_REPO", "").strip()
+                if not state_path:
+                    raise RuntimeError("CLOUD_STATE_REPOSITORY_REQUIRED")
+                state_store = GitHubStateStore(Path(state_path))
+                reservation_callback = QuotaLedger(state_store).reserve
+            else:
+                raise RuntimeError("CLOUD_STATE_BACKEND_INVALID")
+            state_store.read(fetch=False)
+        except Exception as exc:
+            if type(exc).__name__ == "StateUnavailable":
+                raise RuntimeError(str(exc)) from None
+            if type(exc).__name__ == "D1StateError":
+                raise RuntimeError(str(exc)) from None
+            if isinstance(exc, RuntimeError):
+                raise
+            raise RuntimeError("CLOUD_QUOTA_STATE_UNAVAILABLE") from None
+        logger.info("Cloud durable quota reservations: enabled")
+    rate_limiter = CreditRateLimitController(reservation_callback=reservation_callback)
     client = TwelveDataClient(api_key, rate_limiter=rate_limiter)
     fred_client = FredClient(fred_api_key)
     cboe_client = CboeClient()

@@ -6,6 +6,8 @@ import importlib
 
 import pytest
 
+pytest_plugins = ("tests.persistence_fixtures",)
+
 
 @pytest.fixture(autouse=True)
 def isolate_project_caches(tmp_path, monkeypatch):

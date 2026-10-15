@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "marketbot-state-api-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-14",
+  "workers_dev": true,
+  "vars": {
+    "MARKETBOT_TEST_MODE": "phase3c-synthetic-mutations-v1",
+    "MARKETBOT_TEST_DATABASE_ID": "8049a22c-eb1f-4e9d-928d-29b35dcc6f70",
+    "MARKETBOT_TEST_WORKER_NAME": "marketbot-state-api-test"
+  },
+  "secrets": {
+    "required": ["STATE_API_HMAC_SECRET", "STATE_ADMIN_HMAC_SECRET"]
+  },
+  "observability": { "enabled": false },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "marketbot-test",
+      "database_id": "8049a22c-eb1f-4e9d-928d-29b35dcc6f70",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

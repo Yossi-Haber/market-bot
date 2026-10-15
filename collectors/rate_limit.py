@@ -49,6 +49,7 @@ class CreditRateLimitController:
         state_path: Path | None = None,
         max_blocking_wait_seconds: float | None = None,
         request_recorder: Callable[[dict[str, Any]], None] | None = None,
+        reservation_callback: Callable[[int], Any] | None = None,
         initial_daily_requests: int = 0,
     ) -> None:
         self.limits = limits or TwelveDataPlanLimits()
@@ -64,6 +65,7 @@ class CreditRateLimitController:
         self.max_blocking_wait_seconds = max_blocking_wait_seconds
         self.next_eligible_at: str | None = None
         self.request_recorder = request_recorder
+        self.reservation_callback = reservation_callback
         self.pending_request_context: dict[str, str] = {}
         self._load_state()
 
@@ -86,6 +88,15 @@ class CreditRateLimitController:
             self._wait_for_next_window(logger)
             waited = True
 
+        # A cloud reservation is published before the HTTP client is allowed
+        # to proceed. Any exception here is a hard stop; a consumed-but-unused
+        # reservation is intentionally conservative after process failure.
+        if self.reservation_callback is not None:
+            try:
+                self.reservation_callback(int(credits_required))
+            except Exception as exc:
+                logger.error("DURABLE_QUOTA_RESERVATION_REJECTED error_class=%s", type(exc).__name__)
+                raise
         self._requests_in_minute += credits_required
         self.daily_requests += credits_required
         self._persist_state()

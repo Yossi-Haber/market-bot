@@ -1,0 +1,12 @@
+{
+  "name": "marketbot-state-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node scripts/local_d1_tests.mjs",
+    "check": "node node_modules/wrangler/bin/wrangler.js deploy --dry-run --outdir .wrangler/build-check"
+  },
+  "devDependencies": {
+    "wrangler": "4.151.0"
+  }
+}

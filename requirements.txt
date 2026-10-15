@@ -2,3 +2,4 @@ requests==2.34.2
 python-dotenv==1.2.3
 openai==3.19.2
 playwright==1.63.0
+pandas_market_calendars==5.5.0

@@ -127,12 +127,22 @@ def write_delivery_manifest(payload: dict[str, Any], output_dir: Path) -> Path:
     return path
 
 
+def _recipient_result(durable: bool, slot: str | None, chat_id: str, status: str, error: str | None = None) -> dict[str, str]:
+    """Preserve the local manifest while cloud mode uses only HMAC slots."""
+    result: dict[str, str] = {"recipient_slot": str(slot)} if durable and slot else ({"chat_id": chat_id} if not durable else {})
+    result["status"] = status
+    if error:
+        result["error"] = error
+    return result
+
+
 def run_delivery(
     *,
     dry_run: bool = False,
     transport: TelegramTransport | Any | None = None,
     output_dir: Path | None = None,
     logger: logging.Logger | None = None,
+    durable_ledger: Any | None = None,
 ) -> int:
     """Run one manual delivery attempt, returning zero only for send/dry-run success."""
     output_dir = output_dir or OUTPUT_DIR
@@ -186,31 +196,64 @@ def run_delivery(
 
     transport = transport or TelegramTransport()
     results: list[dict[str, str]] = []
+    market_date = str(report_data.get("market_date") or "")
+    if durable_ledger is not None and not market_date:
+        logger.error("DURABLE_DELIVERY_MARKET_DATE_MISSING")
+        write_delivery_manifest({"channel": "telegram", "status": "FAILED", "error": "DURABLE_DELIVERY_MARKET_DATE_MISSING"}, output_dir)
+        return 1
     for index, chat_id in enumerate(chat_ids, 1):
         logger.info("Recipient %d/%d delivery started", index, len(chat_ids))
+        slot_id = None
         try:
+            if durable_ledger is not None:
+                slot_id = durable_ledger.slot_id(chat_id)
+                try:
+                    durable_ledger.begin_send(market_date, chat_id)
+                except Exception as exc:
+                    # A pre-send publication/duplicate-state failure must block
+                    # transport invocation. The durable slot remains non-sendable.
+                    results.append({"recipient_slot": slot_id, "chat_id": None, "status": "BLOCKED", "error": type(exc).__name__})
+                    logger.error("Recipient %d/%d blocked before send: %s", index, len(chat_ids), type(exc).__name__)
+                    continue
             response = transport.send_photo(token, chat_id, image_path, caption)
             error = map_telegram_response(response)
             if error:
+                if durable_ledger is not None and slot_id:
+                    durable_ledger.record_outcome(market_date, slot_id, "FAILED_SAFE", safe_error=error)
                 raise TelegramDeliveryError(error)
-            results.append({"chat_id": chat_id, "status": "SENT"})
+            if durable_ledger is not None and slot_id:
+                durable_ledger.record_outcome(market_date, slot_id, "SENT")
+            results.append(_recipient_result(durable_ledger is not None, slot_id, chat_id, "SENT"))
             logger.info("Recipient %d/%d sent", index, len(chat_ids))
         except TelegramDeliveryError as exc:
-            results.append({"chat_id": chat_id, "status": "FAILED", "error": str(exc)})
+            results.append(_recipient_result(durable_ledger is not None, slot_id, chat_id, "FAILED_SAFE" if durable_ledger is not None else "FAILED", str(exc)))
             logger.error("Recipient %d/%d failed: %s", index, len(chat_ids), str(exc))
         except requests.Timeout:
-            results.append({"chat_id": chat_id, "status": "FAILED", "error": "TELEGRAM_TIMEOUT"})
+            if durable_ledger is not None and slot_id:
+                durable_ledger.record_outcome(market_date, slot_id, "UNKNOWN", safe_error="TELEGRAM_TIMEOUT")
+            results.append(_recipient_result(durable_ledger is not None, slot_id, chat_id, "UNKNOWN" if durable_ledger is not None else "FAILED", "TELEGRAM_TIMEOUT"))
             logger.error("Recipient %d/%d failed: TELEGRAM_TIMEOUT", index, len(chat_ids))
         except requests.RequestException:
-            results.append({"chat_id": chat_id, "status": "FAILED", "error": "TELEGRAM_NETWORK_ERROR"})
+            if durable_ledger is not None and slot_id:
+                durable_ledger.record_outcome(market_date, slot_id, "UNKNOWN", safe_error="TELEGRAM_NETWORK_ERROR")
+            results.append(_recipient_result(durable_ledger is not None, slot_id, chat_id, "UNKNOWN" if durable_ledger is not None else "FAILED", "TELEGRAM_NETWORK_ERROR"))
             logger.error("Recipient %d/%d failed: TELEGRAM_NETWORK_ERROR", index, len(chat_ids))
         except Exception:
-            results.append({"chat_id": chat_id, "status": "FAILED", "error": "TELEGRAM_API_ERROR"})
+            if durable_ledger is not None and slot_id:
+                # The send call may have reached Telegram before an unexpected
+                # local exception; preserve the no-duplicate safety invariant.
+                try:
+                    durable_ledger.record_outcome(market_date, slot_id, "UNKNOWN", safe_error="TELEGRAM_API_ERROR")
+                except Exception:
+                    logger.error("Recipient %d/%d outcome persistence failed; durable state remains non-sendable", index, len(chat_ids))
+            results.append(_recipient_result(durable_ledger is not None, slot_id, chat_id, "UNKNOWN" if durable_ledger is not None else "FAILED", "TELEGRAM_API_ERROR"))
             logger.error("Recipient %d/%d failed: TELEGRAM_API_ERROR", index, len(chat_ids))
 
     sent = sum(result["status"] == "SENT" for result in results)
     failed = len(results) - sent
     status = "SENT" if failed == 0 else "FAILED" if sent == 0 else "PARTIAL"
+    if durable_ledger is not None and any(result.get("status") == "UNKNOWN" for result in results):
+        status = "UNKNOWN"
     logger.info("Telegram delivery completed: %s", status)
     write_delivery_manifest({"channel": "telegram", "status": status, "sent_at": datetime.now(timezone.utc).isoformat(), "report_date": report_data.get("market_date"), "image": image_path.name, "recipients": results, "summary": {"total": len(results), "sent": sent, "failed": failed}}, output_dir)
     return 0 if status == "SENT" else 1
