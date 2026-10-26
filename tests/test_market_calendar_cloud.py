@@ -178,12 +178,17 @@ def test_production_workflow_is_manual_gated_and_documents_ny_schedule():
     assert "REPORT_ARTIFACT_INCOMPLETE" in content
     assert "REPORT_ARTIFACT_INVALID_JSON" in content
     assert "REPORT_ARTIFACT_SECRET_DETECTED" in content
+    assert "REPORT_ARTIFACT_MARKET_DATE_UNAVAILABLE" in content
+    assert "REPORT_ARTIFACT_MARKET_DATE_MISMATCH" in content
+    assert "REPORT_ARTIFACT_INVALID_JSON_ROOT" in content
     assert "configured_secrets_checked={len(secrets)}" in content
     assert (
         "if: ${{ success() && steps.report_artifact_check.outcome == 'success' "
         "&& (steps.report_no_telegram.outcome == 'success' "
-        "|| steps.report_telegram.outcome == 'success') }}"
+        "|| steps.report_telegram.outcome == 'success') "
+        "&& hashFiles('output/daily_report_data.json') != '' }}"
     ) in content
+    assert "hashFiles('output/daily_report_data.json') != ''" in content
     assert "if-no-files-found: error" in content
     assert "retention-days: 3" in content
     artifact_step = content.split("      - name: Upload successful production report artifacts\n", 1)[1]
@@ -227,7 +232,10 @@ def test_production_artifact_guard_rejects_missing_or_secret_bearing_files(tmp_p
     script = textwrap.dedent(script)
 
     output = tmp_path / "output"
-    output.mkdir()
+    (output / "cloud_operations").mkdir(parents=True)
+    (output / "cloud_operations" / "latest.json").write_text(
+        '{"status":"COMPLETE","market_date":"2026-10-26"}', encoding="utf-8"
+    )
     names = (
         "daily_report_data.json",
         "daily_report_selection.json",
@@ -237,11 +245,12 @@ def test_production_artifact_guard_rejects_missing_or_secret_bearing_files(tmp_p
         "daily_report_v3_visual_validation.json",
     )
     for name in names:
-        payload = b"{}" if name.endswith(".json") else b"safe report"
+        payload = b'{"market_date":"2026-10-26"}' if name == names[0] else b"{}" if name.endswith(".json") else b"safe report"
         (output / name).write_bytes(payload)
 
     env = os.environ.copy()
     env["TELEGRAM_BOT_TOKEN"] = "SYNTHETIC_TEST_SECRET_NEVER_LOG"
+    env["REQUESTED_MARKET_DATE"] = "2026-10-26"
     result = subprocess.run(
         [sys.executable, "-c", script],
         cwd=tmp_path,
@@ -281,6 +290,19 @@ def test_production_artifact_guard_rejects_missing_or_secret_bearing_files(tmp_p
     )
     assert result.returncode == 1
     assert "REPORT_ARTIFACT_INCOMPLETE" in result.stdout
+
+    (output / names[-1]).write_text("{}", encoding="utf-8")
+    (output / names[0]).write_text('{"market_date":"2026-10-27"}', encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "REPORT_ARTIFACT_MARKET_DATE_MISMATCH" in result.stdout
 
 
 @pytest.mark.parametrize(
