@@ -136,7 +136,7 @@ class MarketauxDiscovery:
                 error = payload.get("error") if isinstance(payload, dict) else None
                 if isinstance(error, dict):
                     self.requests_failed += 1
-                    query_stats.update({"error_code": str(error.get("code") or "MARKETAUX_API_ERROR")[:100], "error_message": re.sub(r"\s+", " ", str(error.get("message") or "provider_error"))[:200]})
+                    query_stats.update({"error_code": str(error.get("code") or "MARKETAUX_API_ERROR")[:100], "error_message": _sanitize_provider_error_message(error.get("message"), self.token)})
                     if query_stats["error_code"] == "usage_limit_reached":
                         self._mark_usage_limit_reached()
                     self.query_diagnostics.append(query_stats)
@@ -147,7 +147,7 @@ class MarketauxDiscovery:
                 cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         except requests.HTTPError as exc:
             self.requests_failed += 1
-            status, code, message = _safe_provider_error(exc)
+            status, code, message = _safe_provider_error(exc, sensitive_value=self.token)
             query_stats.update({"status": status, "error_code": code, "error_message": message})
             if status == 402 or code == "usage_limit_reached":
                 self._mark_usage_limit_reached()
@@ -305,7 +305,9 @@ def parse_raw_articles(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [item for item in data if isinstance(item, dict) and item.get("title")]
 
 
-def _safe_provider_error(exc: requests.HTTPError) -> tuple[int | None, str, str]:
+def _safe_provider_error(
+    exc: requests.HTTPError, *, sensitive_value: str = ""
+) -> tuple[int | None, str, str]:
     response = getattr(exc, "response", None)
     status = getattr(response, "status_code", None)
     code, message = "HTTP_ERROR", "provider_request_failed"
@@ -314,10 +316,23 @@ def _safe_provider_error(exc: requests.HTTPError) -> tuple[int | None, str, str]
         error = payload.get("error", {}) if isinstance(payload, dict) else {}
         if isinstance(error, dict):
             code = str(error.get("code") or code)[:100]
-            message = re.sub(r"\s+", " ", str(error.get("message") or message))[:200]
+            message = _sanitize_provider_error_message(error.get("message") or message, sensitive_value)
     except (ValueError, AttributeError, TypeError):
         pass
     return status, code, message
+
+
+def _sanitize_provider_error_message(value: Any, sensitive_value: str = "") -> str:
+    """Bound provider diagnostics and redact credentials before logs/snapshots."""
+    message = re.sub(r"\s+", " ", str(value or "provider_request_failed"))
+    if sensitive_value:
+        message = message.replace(sensitive_value, "[REDACTED]")
+    message = re.sub(
+        r"(?i)\bapi[_-]?token\s*[=:]\s*[^,\s&\"']+",
+        "api_token=[REDACTED]",
+        message,
+    )
+    return message[:200]
 
 
 def classify_article_type(title: str) -> str:
