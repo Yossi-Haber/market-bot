@@ -164,6 +164,7 @@ jobs:
           PY
 
       - name: Run shared daily pipeline with Telegram disabled
+        id: report_no_telegram
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.send_telegram != true }}
         env:
           MARKETBOT_CLOUD_TELEGRAM_ENABLED: "0"
@@ -182,6 +183,7 @@ jobs:
           python run_daily_cloud.py "${args[@]}"
 
       - name: Run shared daily pipeline with D1-protected Telegram delivery
+        id: report_telegram
         if: ${{ github.event_name == 'schedule' || inputs.send_telegram == true }}
         env:
           MARKETBOT_CLOUD_TELEGRAM_ENABLED: ${{ vars.MARKETBOT_CLOUD_TELEGRAM_ENABLED || '0' }}
@@ -201,3 +203,76 @@ jobs:
           args=(--execute --send-telegram)
           if [[ -n "$MARKET_DATE" ]]; then args+=(--market-date "$MARKET_DATE"); fi
           python run_daily_cloud.py "${args[@]}"
+
+      - name: Verify report artifacts are complete and secret-free
+        id: report_artifact_check
+        if: ${{ success() && (steps.report_no_telegram.outcome == 'success' || steps.report_telegram.outcome == 'success') }}
+        env:
+          TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MARKETAUX_API_TOKEN: ${{ secrets.MARKETAUX_API_TOKEN }}
+          MARKETBOT_D1_STATE_HMAC_SECRET: ${{ secrets.MARKETBOT_D1_STATE_HMAC_SECRET }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
+          TELEGRAM_RECIPIENT_ID_HMAC_KEY: ${{ secrets.TELEGRAM_RECIPIENT_ID_HMAC_KEY }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          files = (
+              Path("output/daily_report_data.json"),
+              Path("output/daily_report_selection.json"),
+              Path("output/daily_report_final.md"),
+              Path("output/daily_report_card_v3.html"),
+              Path("output/daily_report_card_v3.png"),
+              Path("output/daily_report_v3_visual_validation.json"),
+          )
+          json_files = {files[0], files[1], files[5]}
+          secrets = {
+              name: value.encode("utf-8")
+              for name, value in os.environ.items()
+              if name in {
+                  "TWELVE_DATA_API_KEY", "FINNHUB_API_KEY", "FRED_API_KEY",
+                  "OPENAI_API_KEY", "MARKETAUX_API_TOKEN",
+                  "MARKETBOT_D1_STATE_HMAC_SECRET", "TELEGRAM_BOT_TOKEN",
+                  "TELEGRAM_CHAT_IDS", "TELEGRAM_RECIPIENT_ID_HMAC_KEY",
+              } and value
+          }
+          for path in files:
+              if not path.is_file() or path.stat().st_size == 0:
+                  print(f"REPORT_ARTIFACT_INCOMPLETE: {path.as_posix()}")
+                  raise SystemExit(1)
+              content = path.read_bytes()
+              if path in json_files:
+                  try:
+                      json.loads(content)
+                  except (UnicodeDecodeError, json.JSONDecodeError):
+                      print(f"REPORT_ARTIFACT_INVALID_JSON: {path.as_posix()}")
+                      raise SystemExit(1)
+              for name, secret in secrets.items():
+                  if secret in content:
+                      print(f"REPORT_ARTIFACT_SECRET_DETECTED: file={path.as_posix()} variable={name}")
+                      raise SystemExit(1)
+          print(f"REPORT_ARTIFACT_SAFETY=PASS files={len(files)} configured_secrets_checked={len(secrets)}")
+          PY
+
+      - name: Upload successful production report artifacts
+        if: ${{ success() && steps.report_artifact_check.outcome == 'success' && (steps.report_no_telegram.outcome == 'success' || steps.report_telegram.outcome == 'success') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: marketbot-production-report-${{ github.run_id }}
+          path: |
+            output/daily_report_data.json
+            output/daily_report_selection.json
+            output/daily_report_final.md
+            output/daily_report_card_v3.html
+            output/daily_report_card_v3.png
+            output/daily_report_v3_visual_validation.json
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0

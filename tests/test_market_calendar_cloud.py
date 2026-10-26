@@ -171,12 +171,116 @@ def test_production_workflow_is_manual_gated_and_documents_ny_schedule():
     assert "vars.MARKETBOT_CLOUD_LIVE_ENABLED || '0'" in content
     assert "vars.MARKETBOT_CLOUD_TELEGRAM_ENABLED || '0'" in content
     assert "MARKETBOT_D1_STATE_ADMIN_HMAC_SECRET" not in content
+    assert content.count("uses: actions/upload-artifact@v7") == 1
+    assert "id: report_no_telegram" in content
+    assert "id: report_telegram" in content
+    assert "id: report_artifact_check" in content
+    assert "REPORT_ARTIFACT_INCOMPLETE" in content
+    assert "REPORT_ARTIFACT_INVALID_JSON" in content
+    assert "REPORT_ARTIFACT_SECRET_DETECTED" in content
+    assert "configured_secrets_checked={len(secrets)}" in content
+    assert (
+        "if: ${{ success() && steps.report_artifact_check.outcome == 'success' "
+        "&& (steps.report_no_telegram.outcome == 'success' "
+        "|| steps.report_telegram.outcome == 'success') }}"
+    ) in content
+    assert "if-no-files-found: error" in content
+    assert "retention-days: 3" in content
+    artifact_step = content.split("      - name: Upload successful production report artifacts\n", 1)[1]
+    artifact_step = artifact_step.split("      - name:", 1)[0]
+    artifact_paths = [
+        line.strip()
+        for line in artifact_step.splitlines()
+        if line.strip().startswith("output/")
+    ]
+    assert artifact_paths == [
+        "output/daily_report_data.json",
+        "output/daily_report_selection.json",
+        "output/daily_report_final.md",
+        "output/daily_report_card_v3.html",
+        "output/daily_report_card_v3.png",
+        "output/daily_report_v3_visual_validation.json",
+    ]
+    assert "output/**" not in artifact_step
+    assert "logs/" not in artifact_step
+    assert "cache/" not in artifact_step
     for secret_name in (
         "TWELVE_DATA_API_KEY", "FINNHUB_API_KEY", "FRED_API_KEY",
         "MARKETBOT_D1_STATE_HMAC_SECRET", "OPENAI_API_KEY", "MARKETAUX_API_TOKEN",
         "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_IDS", "TELEGRAM_RECIPIENT_ID_HMAC_KEY",
     ):
         assert f"secrets.{secret_name}" in content
+
+
+def test_production_artifact_guard_rejects_missing_or_secret_bearing_files(tmp_path):
+    import os
+    import subprocess
+    import sys
+    import textwrap
+    from pathlib import Path
+
+    workflow = Path(__file__).resolve().parents[1] / ".github/workflows/marketbot-production.yml"
+    content = workflow.read_text(encoding="utf-8")
+    step = content.split("      - name: Verify report artifacts are complete and secret-free\n", 1)[1]
+    step = step.split("      - name:", 1)[0]
+    script = step.split("          python - <<'PY'\n", 1)[1].split("\n          PY", 1)[0]
+    script = textwrap.dedent(script)
+
+    output = tmp_path / "output"
+    output.mkdir()
+    names = (
+        "daily_report_data.json",
+        "daily_report_selection.json",
+        "daily_report_final.md",
+        "daily_report_card_v3.html",
+        "daily_report_card_v3.png",
+        "daily_report_v3_visual_validation.json",
+    )
+    for name in names:
+        payload = b"{}" if name.endswith(".json") else b"safe report"
+        (output / name).write_bytes(payload)
+
+    env = os.environ.copy()
+    env["TELEGRAM_BOT_TOKEN"] = "SYNTHETIC_TEST_SECRET_NEVER_LOG"
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "REPORT_ARTIFACT_SAFETY=PASS files=6" in result.stdout
+    assert "SYNTHETIC_TEST_SECRET_NEVER_LOG" not in result.stdout + result.stderr
+
+    (output / "daily_report_final.md").write_text(
+        "accidental secret SYNTHETIC_TEST_SECRET_NEVER_LOG", encoding="utf-8"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "REPORT_ARTIFACT_SECRET_DETECTED" in result.stdout
+    assert "SYNTHETIC_TEST_SECRET_NEVER_LOG" not in result.stdout + result.stderr
+
+    (output / "daily_report_final.md").write_text("safe report", encoding="utf-8")
+    (output / names[-1]).unlink()
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "REPORT_ARTIFACT_INCOMPLETE" in result.stdout
 
 
 @pytest.mark.parametrize(
