@@ -3,6 +3,11 @@ name: Market Bot Production (manual until cutover)
 on:
   workflow_dispatch:
     inputs:
+      market_date:
+        description: "Optional reviewed completed NYSE session (YYYY-MM-DD); blank uses automatic resolution."
+        type: string
+        required: false
+        default: ""
       confirm_production_run:
         description: "Explicitly authorize one cloud production run (requires cutover variables and open D1 ownership gates)."
         type: boolean
@@ -63,6 +68,36 @@ jobs:
           fc-cache --force
           python -m pip install --disable-pip-version-check -r requirements.txt
           python -m playwright install --with-deps chromium
+
+      - name: Validate optional manual market date
+        id: market-date
+        env:
+          MARKET_DATE_INPUT: ${{ inputs.market_date }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import datetime
+          import os
+          import re
+
+          value = os.environ.get("MARKET_DATE_INPUT", "")
+          if value and not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+              print("MARKET_DATE_INVALID: expected YYYY-MM-DD or empty")
+              raise SystemExit(1)
+          if value:
+              try:
+                  parsed = datetime.date.fromisoformat(value)
+              except ValueError:
+                  print("MARKET_DATE_INVALID: not a real calendar date")
+                  raise SystemExit(1)
+              if parsed.isoformat() != value:
+                  print("MARKET_DATE_INVALID: expected canonical YYYY-MM-DD")
+                  raise SystemExit(1)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"value={value}\n")
+          print("MARKET_DATE_VALIDATION=PASS mode=" + ("explicit" if value else "automatic"))
+          PY
 
       - name: Require live cutover switch before exposing production credentials
         env:
@@ -139,7 +174,12 @@ jobs:
           MARKETAUX_API_TOKEN: ${{ secrets.MARKETAUX_API_TOKEN }}
           MARKETBOT_D1_STATE_HMAC_SECRET: ${{ secrets.MARKETBOT_D1_STATE_HMAC_SECRET }}
           TELEGRAM_ENABLED: "false"
-        run: python run_daily_cloud.py --execute
+          MARKET_DATE: ${{ steps.market-date.outputs.value }}
+        shell: bash
+        run: |
+          args=(--execute)
+          if [[ -n "$MARKET_DATE" ]]; then args+=(--market-date "$MARKET_DATE"); fi
+          python run_daily_cloud.py "${args[@]}"
 
       - name: Run shared daily pipeline with D1-protected Telegram delivery
         if: ${{ github.event_name == 'schedule' || inputs.send_telegram == true }}
@@ -155,4 +195,9 @@ jobs:
           TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
           TELEGRAM_RECIPIENT_ID_HMAC_KEY: ${{ secrets.TELEGRAM_RECIPIENT_ID_HMAC_KEY }}
           TELEGRAM_ENABLED: "true"
-        run: python run_daily_cloud.py --execute --send-telegram
+          MARKET_DATE: ${{ steps.market-date.outputs.value }}
+        shell: bash
+        run: |
+          args=(--execute --send-telegram)
+          if [[ -n "$MARKET_DATE" ]]; then args+=(--market-date "$MARKET_DATE"); fi
+          python run_daily_cloud.py "${args[@]}"

@@ -156,8 +156,16 @@ def test_production_workflow_is_manual_gated_and_documents_ny_schedule():
     assert "cancel-in-progress: false" in content
     assert "timeout-minutes: 120" in content
     assert "permissions:\n  contents: read" in content
-    assert "run_daily_cloud.py --execute" in content
-    assert "run_daily_cloud.py --execute --send-telegram" in content
+    assert "run_daily_cloud.py \"${args[@]}\"" in content
+    assert "args=(--execute)" in content
+    assert "args=(--execute --send-telegram)" in content
+    assert content.count('args+=(--market-date "$MARKET_DATE")') == 2
+    assert 'MARKET_DATE_INPUT: ${{ inputs.market_date }}' in content
+    assert 'MARKET_DATE: ${{ steps.market-date.outputs.value }}' in content
+    assert 're.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value)' in content
+    assert "datetime.date.fromisoformat(value)" in content
+    assert "parsed.isoformat() != value" in content
+    assert content.count("${{ inputs.market_date }}") == 1
     assert "github.ref == 'refs/heads/main'" in content
     assert "vars.MARKETBOT_CLOUD_SCHEDULE_ENABLED == '1'" in content
     assert "vars.MARKETBOT_CLOUD_LIVE_ENABLED || '0'" in content
@@ -169,3 +177,42 @@ def test_production_workflow_is_manual_gated_and_documents_ny_schedule():
         "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_IDS", "TELEGRAM_RECIPIENT_ID_HMAC_KEY",
     ):
         assert f"secrets.{secret_name}" in content
+
+
+@pytest.mark.parametrize(
+    ("value", "expected_exit", "expected_output"),
+    [
+        ("", 0, "value=\n"),
+        ("2026-10-26", 0, "value=2026-10-26\n"),
+        ("2026-2-06", 1, ""),
+        ("2026-02-30", 1, ""),
+        ("2026-10-26; echo unsafe", 1, ""),
+    ],
+)
+def test_workflow_market_date_validator_executes_strictly(value, expected_exit, expected_output, tmp_path):
+    import os
+    import subprocess
+    import sys
+    import textwrap
+    from pathlib import Path
+
+    workflow = Path(__file__).resolve().parents[1] / ".github/workflows/marketbot-production.yml"
+    content = workflow.read_text(encoding="utf-8")
+    step = content.split("      - name: Validate optional manual market date\n", 1)[1].split("      - name:", 1)[0]
+    script = step.split("          python - <<'PY'\n", 1)[1].split("\n          PY", 1)[0]
+    script = textwrap.dedent(script)
+    output_path = tmp_path / "github_output.txt"
+    env = os.environ.copy()
+    env.update({"MARKET_DATE_INPUT": value, "GITHUB_OUTPUT": str(output_path)})
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == expected_exit
+    actual_output = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
+    assert actual_output == expected_output
