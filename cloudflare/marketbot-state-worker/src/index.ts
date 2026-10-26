@@ -116,16 +116,41 @@ async function dispatch(db: D1Database, opId: string, op: string, payload: JsonO
 async function stateGet(db: D1Database, payload: JsonObject): Promise<DispatchResult> {
   const marketDate = payload.market_date;
   if (marketDate !== undefined && !isDate(marketDate)) throw new ApiError(400, "MARKET_DATE_INVALID");
-  const [ownership, stateMeta, runs, run] = await Promise.all([
+  const [ownership, stateMeta, runs, run, quotaBuckets, quotaSummary, deliverySummary, operationSummary, integrity] = await Promise.all([
     db.prepare("SELECT cloud_quota_exclusive, windows_sender_disabled, cloud_delivery_enabled FROM ownership WHERE singleton=1").first<JsonObject>(),
     db.prepare("SELECT generation,created_at FROM state_meta WHERE singleton=1").first<{ generation: number; created_at: string }>(),
     db.prepare("SELECT market_date, run_id, status, claimed_at, started_at, finished_at, reason_code FROM run_claim ORDER BY market_date").all<JsonObject>(),
     marketDate ? db.prepare("SELECT market_date, run_id, status, claimed_at, started_at, finished_at, reason_code FROM run_claim WHERE market_date=?").bind(marketDate).first<JsonObject>() : Promise.resolve(null),
+    db.prepare("SELECT period,bucket_key,used_credits,limit_credits FROM quota_bucket ORDER BY period,bucket_key").all<JsonObject>(),
+    db.prepare("SELECT utc_day,COUNT(*) AS reservation_count,SUM(credits) AS credits FROM quota_reservation GROUP BY utc_day ORDER BY utc_day").all<JsonObject>(),
+    db.prepare("SELECT market_date,status,COUNT(*) AS recipient_count,SUM(attempt) AS attempts_total,MAX(attempt) AS max_attempt FROM delivery_recipient GROUP BY market_date,status ORDER BY market_date,status").all<JsonObject>(),
+    db.prepare("SELECT operation_type,status,COUNT(*) AS operation_count FROM operations GROUP BY operation_type,status ORDER BY operation_type,status").all<JsonObject>(),
+    db.prepare(`SELECT
+      (SELECT COUNT(*) FROM quota_reservation q LEFT JOIN operations o ON o.operation_id=q.reservation_id AND o.operation_type='quota.reserve' AND o.status='COMMITTED' WHERE o.operation_id IS NULL) AS reservations_without_operation,
+      (SELECT COUNT(*) FROM run_claim r LEFT JOIN operations o ON o.operation_id=r.claim_operation_id AND o.operation_type='run.claim' AND o.status='COMMITTED' WHERE o.operation_id IS NULL AND r.claimed_at>=strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days')) AS recent_runs_without_claim_operation,
+      (SELECT COUNT(*) FROM run_claim r LEFT JOIN operations o ON o.operation_id=r.last_operation_id AND o.status='COMMITTED' WHERE o.operation_id IS NULL AND r.claimed_at>=strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days')) AS recent_runs_without_last_operation,
+      (SELECT COUNT(*) FROM delivery_recipient d LEFT JOIN operations o ON o.operation_id=d.last_operation_id AND o.status='COMMITTED' WHERE o.operation_id IS NULL AND d.updated_at>=strftime('%Y-%m-%dT%H:%M:%fZ','now','-7 days')) AS recent_deliveries_without_last_operation,
+      (SELECT COUNT(*) FROM delivery_recipient d LEFT JOIN run_claim r ON r.market_date=d.market_date WHERE r.market_date IS NULL) AS deliveries_without_run,
+      (SELECT COUNT(*) FROM run_claim r JOIN delivery_recipient d ON d.market_date=r.market_date WHERE r.status='COMPLETE' AND d.status<>'SENT') AS completed_runs_with_unsent_delivery,
+      (SELECT COUNT(*) FROM quota_bucket b WHERE b.period='day' AND b.used_credits<>(SELECT COALESCE(SUM(q.credits),0) FROM quota_reservation q WHERE q.utc_day=b.bucket_key)) AS daily_quota_bucket_mismatches,
+      (SELECT COUNT(*) FROM quota_bucket b WHERE b.period='minute' AND b.used_credits<>(SELECT COALESCE(SUM(q.credits),0) FROM quota_reservation q WHERE q.utc_minute=b.bucket_key)) AS minute_quota_bucket_mismatches`).first<JsonObject>(),
   ]);
   if (!ownership || !stateMeta) throw new ApiError(503, "OWNERSHIP_STATE_MISSING");
   const toBool = (v: unknown) => Number(v) === 1;
   const runsByDate = Object.fromEntries(runs.results.map(item => [String(item.market_date), item]));
-  return { status: 200, body: { schema_version: SCHEMA_VERSION, generation: stateMeta.generation, created_at: stateMeta.created_at, ownership: { cloud_quota_exclusive: toBool(ownership.cloud_quota_exclusive), windows_sender_disabled: toBool(ownership.windows_sender_disabled), cloud_delivery_enabled: toBool(ownership.cloud_delivery_enabled) }, runs: runsByDate, ...(marketDate ? { run } : {}) } };
+  return { status: 200, body: {
+    schema_version: SCHEMA_VERSION,
+    generation: stateMeta.generation,
+    created_at: stateMeta.created_at,
+    ownership: { cloud_quota_exclusive: toBool(ownership.cloud_quota_exclusive), windows_sender_disabled: toBool(ownership.windows_sender_disabled), cloud_delivery_enabled: toBool(ownership.cloud_delivery_enabled) },
+    runs: runsByDate,
+    ...(marketDate ? { run } : {}),
+    quota: { buckets: quotaBuckets.results, reservations_by_utc_day: quotaSummary.results },
+    deliveries_by_market_date_and_status: deliverySummary.results,
+    operations_by_type_and_status: operationSummary.results,
+    integrity_window_days: 7,
+    integrity: integrity || {},
+  } };
 }
 
 async function quotaReserve(db: D1Database, opId: string, p: JsonObject, now: Date, testMode = false): Promise<DispatchResult> {

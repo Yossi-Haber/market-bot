@@ -11,6 +11,11 @@ on:
         options:
           - offline_validation
           - production_state_readonly
+      market_dates:
+        description: "Optional comma-separated market dates to summarize in read-only mode"
+        type: string
+        required: false
+        default: "2026-10-26,2026-10-27"
 
 permissions:
   contents: read
@@ -38,6 +43,7 @@ jobs:
       MARKETBOT_CLOUD_LIVE_ENABLED: "0"
       MARKETBOT_CLOUD_TELEGRAM_ENABLED: "0"
       VALIDATION_MODE: ${{ inputs.validation_mode }}
+      STATE_MARKET_DATES: ${{ inputs.market_dates }}
 
     steps:
       - name: Checkout source without persisted token
@@ -90,7 +96,10 @@ jobs:
           MARKETBOT_STATE_BACKEND: d1
           MARKETBOT_D1_STATE_URL: https://marketbot-state-api.yossihabar1994.workers.dev
           MARKETBOT_D1_STATE_HMAC_SECRET: ${{ secrets.MARKETBOT_D1_STATE_HMAC_SECRET }}
-        run: python validate_cloud_state_readonly.py
+        run: |
+          set -o pipefail
+          mkdir -p output/qa/github_actions_migration_phase4a
+          python validate_cloud_state_readonly.py --expected-ownership 1,1,0 --market-dates "$STATE_MARKET_DATES" 2>&1 | tee output/qa/github_actions_migration_phase4a/production_state_readonly.txt
 
       - name: Create sanitized validation summary
         if: always()
@@ -116,6 +125,10 @@ jobs:
               "- Production state read, if selected, performs only signed state.get; Worker nonce bookkeeping is expected.",
               "- Production providers, run claims, ownership changes, and Telegram delivery are disabled.",
           ]
+          state_path = root / "production_state_readonly.txt"
+          if state_path.exists():
+              summary.extend(["", "## Read-only production D1 summary", ""])
+              summary.extend(f"- `{line.strip()}`" for line in state_path.read_text(encoding="utf-8").splitlines() if line.strip())
           (root / "validation_summary.md").write_text("\n".join(summary) + "\n", encoding="utf-8")
           PY
 
@@ -130,6 +143,7 @@ jobs:
             output/qa/github_actions_migration_phase4a/runtime_inventory.txt
             output/qa/github_actions_migration_phase4a/pytest_results.txt
             output/qa/github_actions_migration_phase4a/validation_summary.md
+            output/qa/github_actions_migration_phase4a/production_state_readonly.txt
             output/qa/github_actions_migration_phase4a/fixture/daily_report_card_v3.png
             output/qa/github_actions_migration_phase4a/fixture/daily_report_v3_visual_validation.json
             output/qa/github_actions_migration_phase4a/fixture/validation_result.json

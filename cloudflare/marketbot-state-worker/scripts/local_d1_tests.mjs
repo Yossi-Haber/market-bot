@@ -140,6 +140,20 @@ try {
     });
     const malformed = await request("state.get", {}, { operationId: crypto.randomBytes(16).toString("hex") });
     assert.equal(malformed.status, 200);
+    assert.deepEqual(malformed.data.quota, { buckets: [], reservations_by_utc_day: [] });
+    assert.deepEqual(malformed.data.deliveries_by_market_date_and_status, []);
+    assert.deepEqual(malformed.data.operations_by_type_and_status, []);
+    assert.equal(malformed.data.integrity_window_days, 7);
+    assert.deepEqual(malformed.data.integrity, {
+      reservations_without_operation: 0,
+      recent_runs_without_claim_operation: 0,
+      recent_runs_without_last_operation: 0,
+      recent_deliveries_without_last_operation: 0,
+      deliveries_without_run: 0,
+      completed_runs_with_unsent_delivery: 0,
+      daily_quota_bucket_mismatches: 0,
+      minute_quota_bucket_mismatches: 0,
+    });
     const badVersionBody = JSON.stringify({ schema_version: 99, operation_id: crypto.randomBytes(16).toString("hex"), op: "state.get", payload: {} });
     const badVersionResponse = await fetch(`${baseUrl}/v1/state`, { method: "POST", headers: { "content-type": "application/json" }, body: badVersionBody });
     assert.equal(badVersionResponse.status, 400);
@@ -149,6 +163,17 @@ try {
     const state = await request("state.get", {});
     assert.deepEqual(state.data.ownership, { cloud_quota_exclusive: false, windows_sender_disabled: false, cloud_delivery_enabled: false });
     assert.equal((await request("quota.reserve", { provider: "twelve_data", credits: 1 })).status, 403);
+  });
+
+  await check("expanded authenticated state.get is business-read-only and omits recipient identifiers", async () => {
+    const counts = () => sqlRows("SELECT (SELECT COUNT(*) FROM operations) AS operations,(SELECT COUNT(*) FROM quota_reservation) AS reservations,(SELECT COUNT(*) FROM quota_bucket) AS buckets,(SELECT COUNT(*) FROM run_claim) AS runs,(SELECT COUNT(*) FROM delivery_recipient) AS deliveries,(SELECT cloud_quota_exclusive*100+windows_sender_disabled*10+cloud_delivery_enabled FROM ownership WHERE singleton=1) AS gates")[0];
+    const before = await withDatabaseCli(() => counts());
+    const response = await request("state.get", {});
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.data.ownership, { cloud_quota_exclusive: false, windows_sender_disabled: false, cloud_delivery_enabled: false });
+    assert.equal(JSON.stringify(response.data).includes("hmac256:"), false);
+    const after = await withDatabaseCli(() => counts());
+    assert.deepEqual(after, before, "state.get must not alter operational D1 tables or ownership");
   });
 
   await check("isolated synthetic mode requires environment plus D1 identity and preserves closed gates", async () => {
@@ -198,6 +223,11 @@ try {
     assert.equal(ownershipAttempt.data.error, "TEST_ADMIN_OPERATION_FORBIDDEN");
     const after = await request("state.get", {});
     assert.deepEqual(after.data.ownership, { cloud_quota_exclusive: false, windows_sender_disabled: false, cloud_delivery_enabled: false });
+    assert.equal(after.data.quota.reservations_by_utc_day.some((row) => row.credits >= 1), true);
+    assert.equal(after.data.deliveries_by_market_date_and_status.some((row) => row.market_date === date && row.status === "SENDING" && row.recipient_count === 1), true);
+    assert.equal(after.data.operations_by_type_and_status.some((row) => row.operation_type === "delivery.begin" && row.status === "COMMITTED"), true);
+    assert.equal(Object.values(after.data.integrity).every((count) => count === 0), true);
+    assert.equal(JSON.stringify(after.data).includes(slot), false, "state.get must not disclose recipient HMACs");
 
     await stopServer();
     await startServer({ testMode: true, testAdminSecret: "wrong-local-admin-secret".padEnd(48, "z") });
@@ -262,7 +292,7 @@ try {
     await withDatabaseCli(() => cli(["d1", "execute", dbName, "--local", "--persist-to", tempRoot, "--command", "DELETE FROM quota_reservation; DELETE FROM quota_bucket;"]));
     const opId = crypto.randomBytes(16).toString("hex");
     const first = await request("quota.reserve", { provider: "twelve_data", credits: 2 }, { operationId: opId });
-    assert.equal(first.data.authorized, true); // Treat the HTTP response as lost after commit.
+    assert.equal(first.data.authorized, true, `quota first response status=${first.status} code=${first.data.error || "none"}`); // Treat the HTTP response as lost after commit.
     const retry = await request("quota.reserve", { provider: "twelve_data", credits: 2 }, { operationId: opId });
     assert.equal(retry.data.authorized, false);
     assert.equal(retry.data.replayed, true);
