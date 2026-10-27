@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from news.schema import NewsCandidate
+from news.performance import NewsBudgetExhausted, ProviderCircuitOpen
 from cache_config import cache_path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -161,7 +162,20 @@ class MarketauxDiscovery:
             self.logger.warning("Marketaux query failed: query_type=%s error_code=MARKETAUX_TIMEOUT", query_type)
             return []
         except (requests.RequestException, OSError, ValueError) as exc:
-            self.requests_failed += 1
+            # The guarded transport can reject a call before any HTTP request.
+            # Such calls belong in diagnostics, but not provider usage totals.
+            blocked_before_http = isinstance(exc, (ProviderCircuitOpen, NewsBudgetExhausted))
+            if blocked_before_http:
+                self.request_count -= 1
+                self.requests_attempted -= 1
+                if query_type == "TARGETED_MOVER":
+                    self.targeted_requests_attempted -= 1
+                query_stats.update({"status": "skipped", "error_code": type(exc).__name__, "error_message": "request_skipped_before_http"})
+                self.query_diagnostics.append(query_stats)
+                self.logger.info("[NEWS] Marketaux request skipped: query_type=%s reason=%s", query_type, type(exc).__name__)
+                return []
+            else:
+                self.requests_failed += 1
             query_stats.update({"status": None, "error_code": type(exc).__name__, "error_message": "request_failed"})
             self.query_diagnostics.append(query_stats)
             self.logger.warning("Marketaux query failed: query_type=%s status=network error_code=%s message=request_failed", query_type, type(exc).__name__)

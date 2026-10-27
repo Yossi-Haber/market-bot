@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from macro_freshness import current_macro
 
 from .model import Driver, DriverStatus, DriverType
 from .cross_asset import classify_market_hypotheses
@@ -57,9 +58,10 @@ def detect_driver_hypotheses(report_data: dict[str, Any], config: dict[str, Any]
     drivers: list[Driver] = []
     core_moves = [_move(core[symbol]) for symbol in ("SPY", "QQQ", "DIA", "IWM") if symbol in core]
     average_market_move = sum(core_moves) / len(core_moves) if core_moves else 0.0
-    rates_bps = _number(macro.get("US10Y", {}).get("change_bps"))
-    vix_move = _move(macro.get("VIX", {}))
-    wti_move = _move(macro.get("WTI", {}))
+    market_date = report_data.get("market_date")
+    rates_bps = _number(macro.get("US10Y", {}).get("change_bps")) if current_macro(macro.get("US10Y"), market_date) else 0.0
+    vix_move = _move(macro.get("VIX", {})) if current_macro(macro.get("VIX"), market_date) else 0.0
+    wti_move = _move(macro.get("WTI", {})) if current_macro(macro.get("WTI"), market_date) else 0.0
 
     if average_market_move <= -abs(_number(thresholds.get("market_move_pct"), 0.75)) and rates_bps >= _number(thresholds.get("rates_change_bps"), 3):
         drivers.append(Driver("RATES_PRESSURE", DriverType.MARKET_DRIVER.value, "US_MARKET", "down", abs(average_market_move), ["SPY", "QQQ", "DIA", "IWM"], movement_evidence=[{"metric": "market_average_change_pct", "value": round(average_market_move, 4)}, {"metric": "US10Y_change_bps", "value": rates_bps}]))

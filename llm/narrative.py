@@ -87,7 +87,7 @@ def run_narrative(provider: LLMProvider | None = None, logger: logging.Logger | 
     if not settings["enable_llm"]:
         logger.info("LLM disabled; using deterministic report")
         _write_final(deterministic, report_data)
-        write_selection({"selected_source": "DETERMINISTIC", "guardrails_valid": False, "errors": [], "warnings": [], "fallback_used": True})
+        write_selection({"selected_source": "DETERMINISTIC", "selection_reason": "LLM_DISABLED", "llm_attempted": False, "guardrails_checked": False, "guardrails_valid": False, "errors": [], "warnings": [], "fallback_used": True})
         return OUTPUT_DIR / "daily_report_final.md"
 
     provider = provider or select_provider(settings, logger)

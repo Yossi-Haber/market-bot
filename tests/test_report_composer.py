@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 from report import composer
-from report.selectors import build_indices, build_macro, build_market_overview, build_sectors, validate_movers
+from report.selectors import build_indices, build_macro, build_market_overview, build_sectors, highlights, notable_moves, validate_movers
+from render.markdown import render_verified_stories
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "report_data.json"
@@ -100,6 +101,72 @@ def test_market_driver_snapshot_is_source_of_truth(monkeypatch, tmp_path):
     assert report["stock_catalysts"][0]["driver_id"] == "STOCK_BA"
     assert report["stock_catalysts"][0]["verification_status"] == "PLAUSIBLE_NOT_VERIFIED"
     assert report["legacy_catalyst_used_for_driver"] is False
+
+
+def test_verified_driver_earnings_story_requires_editorial_evidence_and_has_hebrew_copy():
+    def driver(symbol):
+        return {
+            "driver_type": "STOCK_CATALYST", "verification_status": "CONFIRMED",
+            "subject_gate": "PASS", "causal_gate": "PASS", "event_time_relation": "BEFORE_OR_DURING_SESSION",
+            "related_symbols": [symbol],
+            "verified_story": {
+                "title": f"{symbol} Q3 2026 Earnings Call Summary", "published_at": "2026-10-27T19:58:40+02:00",
+                "affected_symbols": [symbol], "target_symbol": symbol, "event_type": "EARNINGS_RESULTS",
+                "verification": "VERIFIED", "editorial_eligible": True, "causal_eligible": True,
+                "primary_source_name": "SEC EDGAR", "primary_source_domain": "sec.gov",
+                "primary_source_url": "https://www.sec.gov/Archives/edgar/data/1/report.htm",
+                "primary_source_type": "OFFICIAL", "supporting_sources_count": 1,
+            },
+        }
+    ba, ups = driver("BA"), driver("UPS")
+    plausible = driver("CDNS") | {"verification_status": "PLAUSIBLE_NOT_VERIFIED"}
+    unverified = driver("WELL")
+    unverified["verified_story"]["verification"] = "NOT_CONFIRMED"
+    selected = composer.select_verified_driver_stories({"stock_catalysts": [ba, ups, plausible, unverified]}, "2026-10-27", [])
+    assert [item["symbol"] for item in selected] == ["BA", "UPS"]
+    assert all(item["primary_source_name"] == "SEC EDGAR" and "תוצאות לרבעון השלישי" in item["title_he"] for item in selected)
+    assert all("Earnings Call Summary" not in item["title_he"] and "בגלל" not in item["summary_he"] for item in selected)
+    rendered = "\n".join(render_verified_stories({"verified_stories": selected, "movers": {"top_gainers": [], "top_losers": []}}))
+    assert "BA פרסמה תוצאות לרבעון השלישי" in rendered
+    assert "UPS פרסמה תוצאות לרבעון השלישי" in rendered
+    assert rendered.count("מקור: SEC EDGAR") == 2
+    assert composer.select_verified_driver_stories({"stock_catalysts": [ba]}, "2026-10-27", selected) == []
+    ba["verified_story"]["primary_source_url"] = "http://www.sec.gov/Archives/edgar/data/1/report.htm"
+    assert composer.select_verified_driver_stories({"stock_catalysts": [ba]}, "2026-10-27", []) == []
+
+
+def test_composer_promotes_qualified_market_driver_story(monkeypatch, tmp_path):
+    patched_composer(monkeypatch, tmp_path, ["2026-10-27"] * 3)
+    verified = {
+        "title": "BA Q3 2026 Earnings Call Transcript", "published_at": "2026-10-27T15:40:07+02:00",
+        "target_symbol": "BA", "affected_symbols": ["BA"], "event_type": "EARNINGS_RESULTS",
+        "verification": "VERIFIED", "editorial_eligible": True, "causal_eligible": True,
+        "primary_source_name": "SEC EDGAR", "primary_source_domain": "sec.gov",
+        "primary_source_url": "https://www.sec.gov/Archives/edgar/data/1/report.htm",
+        "primary_source_type": "OFFICIAL",
+    }
+    snapshot = {"market_date": "2026-10-27", "driver_analysis": {
+        "main_market_driver": None, "sector_drivers": [],
+        "stock_catalysts": [{"driver_type": "STOCK_CATALYST", "verification_status": "CONFIRMED",
+                             "subject_gate": "PASS", "causal_gate": "PASS", "event_time_relation": "BEFORE_OR_DURING_SESSION",
+                             "related_symbols": ["BA"], "verified_story": verified}],
+        "metrics": {"market_driver_hypotheses": 0, "sector_driver_hypotheses": 0, "stock_catalyst_targets": 1},
+    }}
+    (tmp_path / "market_driver_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    composer.compose_daily_report()
+    report = json.loads((tmp_path / "daily_report_data.json").read_text(encoding="utf-8"))
+    assert len(report["top_stories"]) == len(report["verified_stories"]) == 1
+    assert report["top_stories"][0]["primary_source_name"] == "SEC EDGAR"
+    assert "BA פרסמה תוצאות" in "\n".join(render_verified_stories(report))
+
+
+def test_lagging_macro_remains_displayable_but_not_a_daily_highlight():
+    macro = {
+        "WTI": {"symbol": "WTI", "change_pct": -4.0, "freshness": "lagging", "warning": "STALE_SOURCE_DATA", "latest_observation_date": "2026-10-20"},
+        "VIX": {"symbol": "VIX", "change_pct": 8.0, "freshness": "current", "latest_observation_date": "2026-10-27"},
+    }
+    assert [item["symbol"] for item in notable_moves([], {"all": []}, macro, [])] == ["VIX"]
+    assert [item["symbol"] for item in highlights([], {"all": []}, [], macro)] == ["VIX"]
 
 
 def test_mismatched_dates_raise_market_date_mismatch(monkeypatch, tmp_path):

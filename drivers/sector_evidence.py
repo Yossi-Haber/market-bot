@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from datetime import date
 from typing import Any
+from macro_freshness import current_macro
 
 from .causal import publication_time_relation
 
@@ -125,7 +126,7 @@ def promote_sector_evidence(driver: dict[str, Any], pool: list[dict[str, Any]], 
     if sector == "ENERGY":
         wti = macro.get("WTI", {}) if isinstance(macro.get("WTI"), dict) else {}
         try:
-            wti_move = abs(float(wti.get("change_pct", wti.get("change", 0))))
+            wti_move = abs(float(wti.get("change_pct", wti.get("change", 0)))) if current_macro(wti, report_data.get("market_date")) else 0.0
         except (TypeError, ValueError):
             wti_move = 0.0
         if wti_move < 2.0:

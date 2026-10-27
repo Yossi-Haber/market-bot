@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 from report.selectors import build_indices, build_macro, build_market_overview, build_sectors, highlights, notable_moves, validate_movers
 from news.editorial import build_public_stories
@@ -17,6 +20,7 @@ from drivers import build_driver_analysis
 BASE_DIR = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = BASE_DIR / "output"
 UNEXPLAINED_MOVE_THRESHOLD_PCT = 10.0
+NEW_YORK = ZoneInfo("America/New_York")
 
 
 def build_unexplained_move_notices(movers: dict[str, Any], stock_catalysts: list[dict[str, Any]], verified_stories: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -127,7 +131,6 @@ def compose_daily_report(logger: logging.Logger | None = None) -> Path:
         verified_stories = merge_verified_stories(verified_stories, live_stories)
         logger.info("Verified live stories selected: %d", len(live_stories))
     unconfirmed_leads = select_unconfirmed_leads(catalyst_map)
-    logger.info("Verified stories selected: %d", len(verified_stories))
     market_overview = build_market_overview(indices, sectors["all"])
     notable = notable_moves(indices, sectors, macro, all_movers)
     highlight_candidates = highlights(indices, sectors, all_movers, macro)
@@ -170,9 +173,11 @@ def compose_daily_report(logger: logging.Logger | None = None) -> Path:
     if market_driver_snapshot:
         driver_analysis = market_driver_snapshot["driver_analysis"]
         logger.info("Market Drivers source of truth loaded; legacy catalyst output is not used for driver explanation")
+        verified_stories = merge_verified_stories(verified_stories, select_verified_driver_stories(driver_analysis, market_date, verified_stories))
     else:
         driver_analysis = build_driver_analysis(driver_input)
         logger.info("Market driver hypotheses calculated from legacy report inputs")
+    logger.info("Verified stories selected: %d", len(verified_stories))
     logger.info("Market driver hypotheses calculated: market=%d sector=%d stock=%d", driver_analysis["metrics"]["market_driver_hypotheses"], driver_analysis["metrics"]["sector_driver_hypotheses"], driver_analysis["metrics"]["stock_catalyst_targets"])
     readiness = publication_readiness(indices, sectors, mover_warnings, dates, warnings)
     logger.info("Publication readiness: %s", readiness["status"])
@@ -274,6 +279,61 @@ def select_verified_live_stories(path: Path, market_date: str) -> list[dict[str,
         }
         if story["title_he"] and story["published_at"]:
             selected.append(story)
+    return selected
+
+
+def select_verified_driver_stories(analysis: dict[str, Any], market_date: str, existing: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Publish verified earnings events only when the driver carries its own safe evidence."""
+    selected: list[dict[str, Any]] = []
+    quarter_names = {"1": "הראשון", "2": "השני", "3": "השלישי", "4": "הרביעי"}
+    for driver in analysis.get("stock_catalysts", []):
+        if not isinstance(driver, dict) or driver.get("driver_type") != "STOCK_CATALYST" or driver.get("verification_status") != "CONFIRMED":
+            continue
+        if driver.get("subject_gate") != "PASS" or driver.get("causal_gate") != "PASS" or driver.get("event_time_relation") != "BEFORE_OR_DURING_SESSION":
+            continue
+        story = driver.get("verified_story")
+        if not isinstance(story, dict) or story.get("verification") != "VERIFIED" or story.get("editorial_eligible") is not True or story.get("causal_eligible") is not True:
+            continue
+        symbols = driver.get("related_symbols", [])
+        symbol = str(symbols[0]).upper() if len(symbols) == 1 else ""
+        if not symbol or story.get("target_symbol") != symbol or story.get("affected_symbols") != [symbol]:
+            continue
+        # This deterministic Hebrew copy is supported only for explicit earnings reports.
+        if story.get("event_type") != "EARNINGS_RESULTS":
+            continue
+        source_title = str(story.get("title") or "")
+        if not any(term in source_title.lower() for term in ("earnings", "results", "quarter")):
+            continue
+        published_at = str(story.get("published_at") or "")
+        try:
+            published = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+            if published.tzinfo is None or published.astimezone(NEW_YORK).date().isoformat() != market_date:
+                continue
+        except ValueError:
+            continue
+        source_name = str(story.get("primary_source_name") or "").strip()
+        source_domain = str(story.get("primary_source_domain") or "").lower().strip()
+        source_url = str(story.get("primary_source_url") or "")
+        parsed = urlparse(source_url)
+        if story.get("primary_source_type") not in {"OFFICIAL", "TIER2"} or not source_name or not source_domain or parsed.scheme != "https" or not parsed.hostname or not (parsed.hostname == source_domain or parsed.hostname.endswith("." + source_domain)):
+            continue
+        if any(symbol in item.get("affected_symbols", []) and item.get("category") == "EARNINGS" for item in [*existing, *selected]):
+            continue
+        match = re.search(r"\bQ([1-4])\b", source_title, re.IGNORECASE)
+        quarter = f" לרבעון {quarter_names[match.group(1)]}" if match else " הרבעוניות"
+        public_title = f"{symbol} פרסמה תוצאות{quarter}"
+        public_summary = f"פרסום התוצאות של {symbol} אומת מול {source_name}; לא אומת קשר סיבתי לתנועת המניה."
+        selected.append({
+            "title_he": public_title, "summary_he": public_summary,
+            "title": public_title, "summary": public_summary,
+            "category": "EARNINGS", "published_at": published_at,
+            "source_name": source_name, "source_domain": source_domain, "source_url": source_url,
+            "affected_symbols": [symbol], "symbol": symbol,
+            "verification": "VERIFIED", "editorial_eligible": True,
+            "primary_source_name": source_name, "primary_source_domain": source_domain,
+            "primary_source_url": source_url, "primary_source_type": story["primary_source_type"],
+            "supporting_sources_count": story.get("supporting_sources_count", 1),
+        })
     return selected
 
 

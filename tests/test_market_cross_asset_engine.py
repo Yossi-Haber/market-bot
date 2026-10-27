@@ -1,5 +1,5 @@
 from drivers.cross_asset import build_cross_asset_hypotheses, market_driver_causal_gate
-from drivers.detector import build_driver_analysis
+from drivers.detector import build_driver_analysis, detect_driver_hypotheses
 from drivers.market_driver_discovery import build_market_driver_queries
 from drivers.market_regime import detect_market_regimes
 from drivers.sector_driver import build_sector_driver_analysis
@@ -21,6 +21,18 @@ def test_regime_and_cross_asset_hypothesis_are_deterministic():
     assert {"BROAD_RISK_OFF", "RISING_YIELDS", "TECH_SELL_OFF", "VOLATILITY_SPIKE"}.issubset(regime["regimes"])
     ids = {item["hypothesis_id"] for item in build_cross_asset_hypotheses(report, regime)}
     assert "RATE_PRESSURE_ON_GROWTH" in ids
+
+
+def test_lagging_macro_does_not_create_daily_regime_or_driver():
+    report = _report(us10y=14, vix=12, wti=4.0, xle=2.0)
+    for symbol in ("US10Y", "VIX", "WTI"):
+        report["macro"][symbol].update({"freshness": "lagging", "latest_observation_date": "2026-09-25"})
+    regime = detect_market_regimes(report)
+    assert "RISING_YIELDS" not in regime["regimes"]
+    assert "VOLATILITY_SPIKE" not in regime["regimes"]
+    assert "OIL_SHOCK_UP" not in regime["regimes"]
+    ids = {item.driver_id for item in detect_driver_hypotheses(report)}
+    assert "ENERGY_OIL" not in ids
 
 
 def test_yields_up_but_equities_rally_does_not_force_bearish_rate_hypothesis():

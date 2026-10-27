@@ -164,16 +164,22 @@ def render_verified_stories(data: dict[str, Any]) -> list[str]:
         return lines + ["לא נמצאו סיפורי מניות עם קטליסט מאומת ברמת האמינות שנדרשה לדוח.", ""]
     mover_by_symbol = {item.get("symbol"): item for item in data.get("movers", {}).get("top_gainers", []) + data.get("movers", {}).get("top_losers", [])}
     for story in stories:
-        symbol = story.get("symbol", "")
+        symbol = story.get("symbol") or next(iter(story.get("affected_symbols", [])), "")
         move = mover_by_symbol.get(symbol, {}).get("change_pct")
         move_text = f" | שינוי: {format_pct(move)}" if move is not None else ""
         lines.append(f"- {symbol}{move_text}")
-        if story.get("type"):
-            lines.append(f"  - סוג אירוע: {story['type']}")
-        if story.get("headline"):
-            lines.append(f"  - כותרת: {story['headline']}")
-        if story.get("primary_source"):
-            lines.append(f"  - מקור: {story['primary_source']}")
+        category = story.get("category") or story.get("type")
+        if category:
+            category_display = {"EARNINGS": "דוחות / תחזית"}.get(str(category), category)
+            lines.append(f"  - סוג אירוע: {category_display}")
+        title = story.get("title_he") or story.get("headline") or story.get("title")
+        if title:
+            lines.append(f"  - כותרת: {title}")
+        source = story.get("primary_source_name") or story.get("source_name")
+        if not source and isinstance(story.get("primary_source"), str):
+            source = story["primary_source"]
+        if source:
+            lines.append(f"  - מקור: {source}")
     return lines + [""]
 
 

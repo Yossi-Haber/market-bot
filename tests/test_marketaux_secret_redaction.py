@@ -4,6 +4,7 @@ import pytest
 import requests
 
 from news.marketaux import MarketauxDiscovery
+from news.performance import NewsPerformance, ProviderRequest
 
 
 class _ProviderErrorResponse:
@@ -53,3 +54,19 @@ def test_marketaux_error_diagnostics_redact_token_from_logs_and_snapshot(
     assert "api_token=[REDACTED]" in diagnostics["error_message"]
     assert token not in diagnostics["error_message"]
     assert token not in caplog.text
+
+
+def test_circuit_blocked_queries_are_not_counted_as_http_requests():
+    sent = []
+    def timeout_transport(*args, **kwargs):
+        sent.append(1)
+        raise requests.ReadTimeout("synthetic timeout")
+    performance = NewsPerformance(logging.getLogger("test.marketaux.circuit"))
+    guarded = ProviderRequest(performance, "marketaux", timeout_transport)
+    client = MarketauxDiscovery(logging.getLogger("test.marketaux.circuit"), "2026-10-27", token="synthetic", request_get=guarded)
+    for query in ("first", "second", "third"):
+        assert client.search(query, "GENERAL") == []
+    assert len(sent) == client.request_count == client.requests_attempted == 2
+    assert [item["error_code"] for item in client.query_diagnostics] == ["MARKETAUX_TIMEOUT", "MARKETAUX_TIMEOUT", "ProviderCircuitOpen"]
+    assert client.query_diagnostics[-1]["status"] == "skipped"
+    assert client.requests_failed == 2

@@ -36,6 +36,9 @@ def test_llm_disabled_uses_deterministic_output(monkeypatch, tmp_path):
     assert result == tmp_path / "daily_report_final.md"
     assert provider.calls == 0
     assert selection(tmp_path)["selected_source"] == "DETERMINISTIC"
+    assert selection(tmp_path)["selection_reason"] == "LLM_DISABLED"
+    assert selection(tmp_path)["llm_attempted"] is False
+    assert selection(tmp_path)["guardrails_checked"] is False
     assert (tmp_path / "daily_report_final.md").read_text(encoding="utf-8") == "# דוח דטרמיניסטי\n"
 
 

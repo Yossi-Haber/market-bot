@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from macro_freshness import current_macro
 
 CONFIG_PATH = Path(__file__).with_name("config") / "market_driver_thresholds.json"
 
@@ -50,11 +51,12 @@ def detect_market_regimes(report_data: dict[str, Any], thresholds: dict[str, flo
     index_moves = {symbol: _move(core.get(symbol)) for symbol in ("SPY", "QQQ", "DIA", "IWM")}
     valid_indices = {key: value for key, value in index_moves.items() if value is not None}
     average = sum(valid_indices.values()) / len(valid_indices) if valid_indices else 0.0
-    us10y = _number(macro.get("US10Y", {}).get("change_bps")) or 0.0
-    vix = _move(macro.get("VIX")) or 0.0
-    dxy = _move(macro.get("DXY")) or 0.0
-    wti = _move(macro.get("WTI")) or 0.0
-    gold = _move(macro.get("GOLD")) or 0.0
+    market_date = report_data.get("market_date")
+    us10y = (_number(macro.get("US10Y", {}).get("change_bps")) or 0.0) if current_macro(macro.get("US10Y"), market_date) else 0.0
+    vix = (_move(macro.get("VIX")) or 0.0) if current_macro(macro.get("VIX"), market_date) else 0.0
+    dxy = (_move(macro.get("DXY")) or 0.0) if current_macro(macro.get("DXY"), market_date) else 0.0
+    wti = (_move(macro.get("WTI")) or 0.0) if current_macro(macro.get("WTI"), market_date) else 0.0
+    gold = (_move(macro.get("GOLD")) or 0.0) if current_macro(macro.get("GOLD"), market_date) else 0.0
     sector_moves = {symbol: _move(item) for symbol, item in sectors.items()}
     valid_sectors = {key: value for key, value in sector_moves.items() if value is not None}
     up = sum(value > 0 for value in valid_sectors.values())

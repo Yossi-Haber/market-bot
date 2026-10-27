@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from typing import Any
+from macro_freshness import current_macro
 
 CORE_MOVE_NOTABLE_PCT = 1.0
 SECTOR_MOVE_NOTABLE_PCT = 1.5
@@ -155,7 +156,7 @@ def notable_moves(indices: list[dict[str, Any]], sectors: dict[str, Any], macro:
         if not item:
             continue
         value = item.get("change_bps") if symbol == "US10Y" else item.get("change_pct") if item else None
-        if finite(value) and abs(value) >= threshold:
+        if current_macro(item) and finite(value) and abs(value) >= threshold:
             notable.append({"type": "MACRO", "symbol": symbol, "value": value, "threshold": threshold, "unit": "bps" if symbol == "US10Y" else "pct"})
     return notable
 
@@ -168,7 +169,7 @@ def highlights(indices: list[dict[str, Any]], sectors: dict[str, Any], movers: l
         result.extend([{"type": "TOP_SECTOR", "symbol": sectors["all"][0]["symbol"], "value": sectors["all"][0]["change_pct"]}, {"type": "BOTTOM_SECTOR", "symbol": sectors["all"][-1]["symbol"], "value": sectors["all"][-1]["change_pct"]}])
     if movers:
         result.extend([{"type": "LARGEST_STOCK_GAINER", "symbol": movers[0]["symbol"], "value": movers[0].get("change_pct")}, {"type": "LARGEST_STOCK_LOSER", "symbol": movers[-1]["symbol"], "value": movers[-1].get("change_pct")}])
-    macro_values = [(symbol, abs(item.get("change_bps")) if symbol == "US10Y" else abs(item.get("change_pct"))) for symbol, item in macro.items() if finite(item.get("change_bps" if symbol == "US10Y" else "change_pct"))]
+    macro_values = [(symbol, abs(item.get("change_bps")) if symbol == "US10Y" else abs(item.get("change_pct"))) for symbol, item in macro.items() if current_macro(item) and finite(item.get("change_bps" if symbol == "US10Y" else "change_pct"))]
     if macro_values:
         symbol, value = max(macro_values, key=lambda pair: pair[1])
         result.append({"type": "LARGEST_MACRO_MOVE", "symbol": symbol, "value": macro[symbol].get("change_bps") if symbol == "US10Y" else macro[symbol].get("change_pct")})
