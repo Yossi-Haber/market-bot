@@ -11,6 +11,7 @@ on:
         options:
           - offline_validation
           - production_state_readonly
+          - artifact_upload_smoke
       market_dates:
         description: "Optional comma-separated market dates to summarize in read-only mode"
         type: string
@@ -89,6 +90,49 @@ jobs:
 
       - name: Render fixture report and Hebrew poster without providers
         run: python validate_linux_compatibility.py --output-dir output/qa/github_actions_migration_phase4a/fixture
+
+      - name: Validate fixture using production artifact rules
+        if: inputs.validation_mode == 'artifact_upload_smoke'
+        env:
+          TWELVE_DATA_API_KEY: SYNTHETIC_FIXTURE_SECRET_CANARY
+          MARKETAUX_API_TOKEN: SYNTHETIC_MARKETAUX_SECRET_CANARY
+          TELEGRAM_BOT_TOKEN: SYNTHETIC_TELEGRAM_SECRET_CANARY
+          REQUESTED_MARKET_DATE: "2026-09-25"
+        shell: bash
+        run: |
+          fixture_dir=output/qa/github_actions_migration_phase4a/fixture
+          mkdir -p "$fixture_dir/cloud_operations"
+          python - "$fixture_dir" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          report = json.loads((root / "daily_report_data.json").read_text(encoding="utf-8"))
+          (root / "cloud_operations" / "latest.json").write_text(
+              json.dumps({"status": "FIXTURE_ONLY", "market_date": report["market_date"]}),
+              encoding="utf-8",
+          )
+          PY
+          python validate_production_report_artifacts.py \
+            --output-dir "$fixture_dir" \
+            --manifest "$fixture_dir/cloud_operations/latest.json" \
+            --requested-market-date "$REQUESTED_MARKET_DATE"
+
+      - name: Upload clearly labeled artifact validation fixture
+        if: ${{ success() && inputs.validation_mode == 'artifact_upload_smoke' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: marketbot-artifact-validation-smoke-${{ github.run_id }}
+          path: |
+            output/qa/github_actions_migration_phase4a/fixture/daily_report_data.json
+            output/qa/github_actions_migration_phase4a/fixture/daily_report_selection.json
+            output/qa/github_actions_migration_phase4a/fixture/daily_report_final.md
+            output/qa/github_actions_migration_phase4a/fixture/daily_report_card_v3.html
+            output/qa/github_actions_migration_phase4a/fixture/daily_report_card_v3.png
+            output/qa/github_actions_migration_phase4a/fixture/daily_report_v3_visual_validation.json
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
 
       - name: Authenticated production Worker state read (no claims or providers)
         if: inputs.validation_mode == 'production_state_readonly'

@@ -175,13 +175,18 @@ def test_production_workflow_is_manual_gated_and_documents_ny_schedule():
     assert "id: report_no_telegram" in content
     assert "id: report_telegram" in content
     assert "id: report_artifact_check" in content
-    assert "REPORT_ARTIFACT_INCOMPLETE" in content
-    assert "REPORT_ARTIFACT_INVALID_JSON" in content
-    assert "REPORT_ARTIFACT_SECRET_DETECTED" in content
-    assert "REPORT_ARTIFACT_MARKET_DATE_UNAVAILABLE" in content
-    assert "REPORT_ARTIFACT_MARKET_DATE_MISMATCH" in content
-    assert "REPORT_ARTIFACT_INVALID_JSON_ROOT" in content
-    assert "configured_secrets_checked={len(secrets)}" in content
+    assert "python validate_production_report_artifacts.py" in content
+    validator = (Path(__file__).resolve().parents[1] / "validate_production_report_artifacts.py").read_text(encoding="utf-8")
+    for diagnostic in (
+        "REPORT_ARTIFACT_INCOMPLETE",
+        "REPORT_ARTIFACT_INVALID_JSON",
+        "REPORT_ARTIFACT_SECRET_DETECTED",
+        "REPORT_ARTIFACT_MARKET_DATE_UNAVAILABLE",
+        "REPORT_ARTIFACT_MARKET_DATE_MISMATCH",
+        "REPORT_ARTIFACT_INVALID_JSON_ROOT",
+        "configured_secrets_checked={checked}",
+    ):
+        assert diagnostic in validator
     assert (
         "if: ${{ success() && steps.report_artifact_check.outcome == 'success' "
         "&& (steps.report_no_telegram.outcome == 'success' "
@@ -221,15 +226,9 @@ def test_production_artifact_guard_rejects_missing_or_secret_bearing_files(tmp_p
     import os
     import subprocess
     import sys
-    import textwrap
     from pathlib import Path
 
-    workflow = Path(__file__).resolve().parents[1] / ".github/workflows/marketbot-production.yml"
-    content = workflow.read_text(encoding="utf-8")
-    step = content.split("      - name: Verify report artifacts are complete and secret-free\n", 1)[1]
-    step = step.split("      - name:", 1)[0]
-    script = step.split("          python - <<'PY'\n", 1)[1].split("\n          PY", 1)[0]
-    script = textwrap.dedent(script)
+    script = Path(__file__).resolve().parents[1] / "validate_production_report_artifacts.py"
 
     output = tmp_path / "output"
     (output / "cloud_operations").mkdir(parents=True)
@@ -250,10 +249,16 @@ def test_production_artifact_guard_rejects_missing_or_secret_bearing_files(tmp_p
 
     env = os.environ.copy()
     env["TELEGRAM_BOT_TOKEN"] = "SYNTHETIC_TEST_SECRET_NEVER_LOG"
-    env["REQUESTED_MARKET_DATE"] = "2026-10-26"
+    args = [
+        sys.executable,
+        str(script),
+        "--output-dir", str(output),
+        "--manifest", str(output / "cloud_operations" / "latest.json"),
+        "--requested-market-date", "2026-10-26",
+    ]
     result = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=tmp_path,
+        args,
+        cwd=Path(__file__).resolve().parents[1],
         env=env,
         capture_output=True,
         text=True,
@@ -267,8 +272,8 @@ def test_production_artifact_guard_rejects_missing_or_secret_bearing_files(tmp_p
         "accidental secret SYNTHETIC_TEST_SECRET_NEVER_LOG", encoding="utf-8"
     )
     result = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=tmp_path,
+        args,
+        cwd=Path(__file__).resolve().parents[1],
         env=env,
         capture_output=True,
         text=True,
@@ -281,8 +286,8 @@ def test_production_artifact_guard_rejects_missing_or_secret_bearing_files(tmp_p
     (output / "daily_report_final.md").write_text("safe report", encoding="utf-8")
     (output / names[-1]).unlink()
     result = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=tmp_path,
+        args,
+        cwd=Path(__file__).resolve().parents[1],
         env=env,
         capture_output=True,
         text=True,
@@ -294,8 +299,8 @@ def test_production_artifact_guard_rejects_missing_or_secret_bearing_files(tmp_p
     (output / names[-1]).write_text("{}", encoding="utf-8")
     (output / names[0]).write_text('{"market_date":"2026-10-27"}', encoding="utf-8")
     result = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=tmp_path,
+        args,
+        cwd=Path(__file__).resolve().parents[1],
         env=env,
         capture_output=True,
         text=True,

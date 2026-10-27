@@ -220,67 +220,10 @@ jobs:
           REQUESTED_MARKET_DATE: ${{ steps.market-date.outputs.value }}
         shell: bash
         run: |
-          python - <<'PY'
-          import json
-          import os
-          from datetime import date
-          from pathlib import Path
-
-          files = (
-              Path("output/daily_report_data.json"),
-              Path("output/daily_report_selection.json"),
-              Path("output/daily_report_final.md"),
-              Path("output/daily_report_card_v3.html"),
-              Path("output/daily_report_card_v3.png"),
-              Path("output/daily_report_v3_visual_validation.json"),
-          )
-          json_files = {files[0], files[1], files[5]}
-          parsed_json = {}
-          secrets = {
-              name: value.encode("utf-8")
-              for name, value in os.environ.items()
-              if name in {
-                  "TWELVE_DATA_API_KEY", "FINNHUB_API_KEY", "FRED_API_KEY",
-                  "OPENAI_API_KEY", "MARKETAUX_API_TOKEN",
-                  "MARKETBOT_D1_STATE_HMAC_SECRET", "TELEGRAM_BOT_TOKEN",
-                  "TELEGRAM_CHAT_IDS", "TELEGRAM_RECIPIENT_ID_HMAC_KEY",
-              } and value
-          }
-          for path in files:
-              if not path.is_file() or path.stat().st_size == 0:
-                  print(f"REPORT_ARTIFACT_INCOMPLETE: {path.as_posix()}")
-                  raise SystemExit(1)
-              content = path.read_bytes()
-              if path in json_files:
-                  try:
-                      parsed_json[path] = json.loads(content)
-                  except (UnicodeDecodeError, json.JSONDecodeError):
-                      print(f"REPORT_ARTIFACT_INVALID_JSON: {path.as_posix()}")
-                      raise SystemExit(1)
-              for name, secret in secrets.items():
-                  if secret in content:
-                      print(f"REPORT_ARTIFACT_SECRET_DETECTED: file={path.as_posix()} variable={name}")
-                      raise SystemExit(1)
-          manifest_path = Path("output/cloud_operations/latest.json")
-          try:
-              manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-              resolved_date = str(manifest["market_date"])
-              if date.fromisoformat(resolved_date).isoformat() != resolved_date:
-                  raise ValueError
-          except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
-              print("REPORT_ARTIFACT_MARKET_DATE_UNAVAILABLE")
-              raise SystemExit(1)
-          report = parsed_json[files[0]]
-          if not isinstance(report, dict):
-              print("REPORT_ARTIFACT_INVALID_JSON_ROOT")
-              raise SystemExit(1)
-          report_date = report.get("market_date")
-          requested_date = os.environ.get("REQUESTED_MARKET_DATE", "").strip()
-          if report_date != resolved_date or (requested_date and requested_date != resolved_date):
-              print("REPORT_ARTIFACT_MARKET_DATE_MISMATCH")
-              raise SystemExit(1)
-          print(f"REPORT_ARTIFACT_SAFETY=PASS files={len(files)} configured_secrets_checked={len(secrets)}")
-          PY
+          python validate_production_report_artifacts.py \
+            --output-dir output \
+            --manifest output/cloud_operations/latest.json \
+            --requested-market-date "$REQUESTED_MARKET_DATE"
 
       - name: Upload successful production report artifacts
         if: ${{ success() && steps.report_artifact_check.outcome == 'success' && (steps.report_no_telegram.outcome == 'success' || steps.report_telegram.outcome == 'success') && hashFiles('output/daily_report_data.json') != '' }}
