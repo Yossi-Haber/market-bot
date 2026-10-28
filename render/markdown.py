@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from news.editorial import public_hebrew_copy
+
 from .formatting import format_bps, format_pct, format_price, format_signed_number
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -172,9 +174,12 @@ def render_verified_stories(data: dict[str, Any]) -> list[str]:
         if category:
             category_display = {"EARNINGS": "דוחות / תחזית"}.get(str(category), category)
             lines.append(f"  - סוג אירוע: {category_display}")
-        title = story.get("title_he") or story.get("headline") or story.get("title")
+        public_copy = public_hebrew_copy(story)
+        title = public_copy.get("title_he")
         if title:
             lines.append(f"  - כותרת: {title}")
+        elif story.get("title") or story.get("headline"):
+            lines.append(f"  - כותרת (לא תורגמה): {story.get('title') or story.get('headline')}")
         source = story.get("primary_source_name") or story.get("source_name")
         if not source and isinstance(story.get("primary_source"), str):
             source = story["primary_source"]

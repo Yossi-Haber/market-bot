@@ -15,7 +15,12 @@ from news.providers.finnhub import (
     FinnhubProvider,
     analyst_action_direction_compatible,
     cluster_finnhub_candidates,
+    classify_finnhub_event,
+    extract_event_signature,
+    finnhub_subject_role,
+    parse_analyst_action,
 )
+from news.schema import NewsCandidate
 from news.verification_acquisition import LiveEvidenceAcquirer
 from news.verification_v2 import verify_candidate
 
@@ -36,18 +41,25 @@ class _DisabledFMP:
     errors = 0
 
 
-def _candidate_from_cluster(cluster: dict[str, Any], symbol: str) -> dict[str, Any]:
+def _candidate_from_cluster(cluster: dict[str, Any], symbol: str, market_date: str | None = None) -> dict[str, Any]:
     best = cluster.get("best_candidate")
     articles = []
+    article_objects = {}
     for article in cluster.get("articles", []):
+        if isinstance(article, dict):
+            article = NewsCandidate(**{field.name: article[field.name] for field in fields(NewsCandidate) if field.name in article})
+        signature = extract_event_signature(article, symbol)
+        role, _, _ = finnhub_subject_role(article, symbol)
+        article_objects[(article.title, article.published_at)] = article
         articles.append({
             key: getattr(article, key, None)
-            for key in ("title", "summary", "published_at", "affected_symbols", "category")
-        })
-    return {
+            for key in ("title", "summary", "published_at", "affected_symbols", "category", "source_name", "source_url")
+        } | signature | {"target_symbol": symbol.upper(), "target_role": role})
+    candidate = {
         "title": cluster.get("canonical_event_title"),
         "summary": getattr(best, "summary", None),
         "published_at": getattr(best, "published_at", None),
+        "event_occurred_at": getattr(best, "raw_metadata", {}).get("event_occurred_at"),
         "affected_symbols": [symbol.upper()],
         "target_symbol": cluster.get("target_symbol", symbol.upper()),
         "event_type": cluster.get("event_type"),
@@ -68,6 +80,25 @@ def _candidate_from_cluster(cluster: dict[str, Any], symbol: str) -> dict[str, A
         "cluster_article_dates": [item.get("published_at") for item in articles if item.get("published_at")],
         "cluster_articles": articles,
     }
+    if market_date:
+        timing = evaluate_causal_eligibility(candidate, market_date)
+        if timing["event_time_relation"] == "BEFORE_OR_DURING_SESSION" and publication_time_relation(candidate["published_at"], market_date) == "FUTURE_EVENT":
+            support = next((article for article in articles if article.get("published_at") == timing["earliest_supported_publication_at"] and article.get("title") == timing["supporting_publication_title"]), None)
+            if support:
+                # Verification/publication must not acquire new facts from a
+                # post-close recap merely because an earlier event was matched.
+                candidate["representative_published_at"] = candidate["published_at"]
+                candidate["representative_title"] = candidate["title"]
+                for key in ("title", "summary", "published_at", "source_name", "source_url"):
+                    candidate[key] = support.get(key)
+                candidate["canonical_event_title"] = candidate["title"]
+                for key in ("event_actions", "topic_family", "actors"):
+                    candidate[key] = support.get(key)
+                candidate["event_type"] = candidate["category"] = classify_finnhub_event(candidate["title"])[0]
+                supporting_article = article_objects[(support["title"], support["published_at"])]
+                candidate["analyst_action"] = parse_analyst_action(supporting_article, symbol)
+                candidate["event_occurred_at"] = supporting_article.raw_metadata.get("event_occurred_at")
+    return candidate
 
 
 def _select_cluster(
@@ -86,9 +117,8 @@ def _select_cluster(
             continue
         if not analyst_action_direction_compatible(action, move_pct):
             continue
-        candidate = _candidate_from_cluster(cluster, symbol)
-        published_at = candidate.get("published_at")
-        if publication_time_relation(published_at, market_date) != "BEFORE_OR_DURING_SESSION":
+        candidate = _candidate_from_cluster(cluster, symbol, market_date)
+        if evaluate_causal_eligibility(candidate, market_date)["event_time_relation"] != "BEFORE_OR_DURING_SESSION":
             continue
         if cluster.get("event_type") == "ANALYST_ACTION":
             action = cluster.get("analyst_action")
@@ -98,7 +128,12 @@ def _select_cluster(
                 continue
         if evaluate_causal_eligibility(candidate, market_date).get("causal_eligible"):
             eligible.append(cluster)
-    return max(eligible, key=lambda item: item.get("selection_score", 0)) if eligible else (clusters[0] if clusters else None)
+    if eligible:
+        return max(eligible, key=lambda item: item.get("selection_score", 0))
+    # Retain existing rank order among eligible events. A future cluster cannot
+    # hide an already reported event for the completed session.
+    timely = [cluster for cluster in clusters if evaluate_causal_eligibility(_candidate_from_cluster(cluster, symbol, market_date), market_date)["causal_eligible"]]
+    return timely[0] if timely else (clusters[0] if clusters else None)
 
 
 def _matches(story: dict[str, Any], driver: dict[str, Any]) -> bool:
@@ -185,7 +220,7 @@ def run_market_driver_pipeline(
             if selected_cluster is None:
                 continue
             selected_clusters[symbol] = selected_cluster
-            candidate = _candidate_from_cluster(selected_cluster, symbol)
+            candidate = _candidate_from_cluster(selected_cluster, symbol, market_date)
             candidate.update(evaluate_causal_eligibility(candidate, market_date))
             action = candidate.get("analyst_action")
             if candidate.get("event_type") == "ANALYST_ACTION" and action and not analyst_action_direction_compatible(action, move_pct):

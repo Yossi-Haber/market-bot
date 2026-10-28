@@ -30,12 +30,14 @@ def test_production_driver_stage_is_symbol_scoped_and_fmp_free(tmp_path, monkeyp
         live_requests = 0
         cache_hits = 1
         cache_misses = 0
+        calls = []
 
         def __init__(self, **kwargs):
             pass
 
         def search_company(self, symbol, start, end):
             assert symbol == "BA"
+            self.calls.append((symbol, start, end))
             return [article]
 
     class Diagnostics:
@@ -59,3 +61,4 @@ def test_production_driver_stage_is_symbol_scoped_and_fmp_free(tmp_path, monkeyp
     assert ba["verification_status"] == "PLAUSIBLE_NOT_VERIFIED"
     assert payload["metrics"]["fmp_requests"] == 0
     assert payload["verification_records"][0]["route"][0] == "REGULATOR_OFFICIAL"
+    assert FakeFinnhub.calls == [("BA", "2026-09-28", "2026-09-29")]

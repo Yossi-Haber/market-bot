@@ -15,6 +15,7 @@ from pathlib import Path
 
 from cache_config import cache_path
 from news.schema import NewsCandidate
+from news.event_language import asserted_event_type, is_future_preview
 
 API_URL = "https://finnhub.io/api/v1/company-news"
 CACHE_DIR = cache_path("finnhub")
@@ -26,9 +27,16 @@ DRIVER_CONFIG_PATH = Path(__file__).resolve().parents[2] / "drivers" / "config" 
 def classify_finnhub_event(title: str) -> tuple[str, int]:
     """Classify explicit event language for driver-oriented ranking."""
     text = re.sub(r"\s+", " ", title.lower()).strip()
+    if is_future_preview(title):
+        return "OTHER", 0
     # Regulatory language must win before generic contract/order language.
     if any(term in text for term in ("faa", "sec ", "doj", "ftc", "fda", "regulator", "regulatory", "certification halted", "certification delay", "certification delayed", "investigation")):
         return "REGULATORY", 48
+    asserted = asserted_event_type(title)
+    if asserted == "GUIDANCE_CHANGE":
+        return asserted, 48
+    if asserted == "ANALYST_ACTION":
+        return asserted, 36
     rules = (
         ("ANALYST_ACTION", ("upgraded", "downgraded", "analyst", "ubs calls", "price target"), 36),
         ("EARNINGS_RESULTS", ("earnings", "revenue", "profit", "quarterly results"), 48),

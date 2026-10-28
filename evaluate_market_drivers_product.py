@@ -11,6 +11,7 @@ import argparse
 import csv
 import json
 import math
+import re
 from dataclasses import fields
 from datetime import date, timedelta
 from pathlib import Path
@@ -319,17 +320,74 @@ def _read_labels(path: Path = LABELS_PATH) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
-def _label_metrics(records: list[dict[str, Any]], labels: list[dict[str, str]]) -> dict[str, float | int | None]:
-    if not labels:
-        return {"labeled_records": 0, "precision_on_labeled": None, "false_positive_rate_on_labeled": None, "false_negative_rate_on_labeled": None}
+def _label_metrics(records: list[dict[str, Any]], labels: list[dict[str, str]]) -> dict[str, Any]:
+    """Score explicit truth against predictions, separating event and attribution.
+
+    Legacy FP/FN labels describe an earlier model, not independent ground truth;
+    they and UNCLEAR rows are excluded. Event identity is assessed only when a
+    human supplied expected_event. Identity comparison is deliberately exact
+    after case/punctuation normalization; this evaluator never guesses a match.
+    A wrong-event prediction contributes both a false positive and false negative.
+    """
+    expected_status = {"CORRECT_CAUSAL": "CONFIRMED", "PLAUSIBLE_CAUSAL": "PLAUSIBLE_NOT_VERIFIED", "NO_PUBLIC_CATALYST": "NO_CATALYST_FOUND"}
+    positive_statuses = {"CONFIRMED", "PLAUSIBLE_NOT_VERIFIED"}
+    def normalize(value: Any) -> str:
+        return " ".join(re.findall(r"\w+", str(value or "").casefold()))
+
+    def summarize(counts: dict[str, int]) -> dict[str, Any]:
+        tp, fp, fn, tn = (counts[key] for key in ("tp", "fp", "fn", "tn"))
+        return {**counts, "precision": tp / (tp + fp) if tp + fp else None,
+                "recall": tp / (tp + fn) if tp + fn else None,
+                "false_positive_rate": fp / (fp + tn) if fp + tn else None,
+                "false_negative_rate": fn / (fn + tp) if fn + tp else None}
+
+    def score(counts: dict[str, int], truth_positive: bool, predicted: bool, matches: bool) -> None:
+        counts["support"] += 1
+        counts["positive_support"] += int(truth_positive)
+        counts["negative_support"] += int(not truth_positive)
+        if truth_positive and predicted and matches:
+            counts["tp"] += 1
+        else:
+            counts["fp"] += int(predicted)
+            counts["fn"] += int(truth_positive)
+            counts["tn"] += int(not truth_positive and not predicted)
+
+    def empty() -> dict[str, int]:
+        return dict.fromkeys(("tp", "fp", "fn", "tn", "support", "positive_support", "negative_support"), 0)
+
     by_key = {(row.get("date"), row.get("symbol", "").upper()): row for row in records}
     labeled = [(row, by_key.get((row.get("date"), row.get("symbol", "").upper()))) for row in labels]
     labeled = [(row, record) for row, record in labeled if record]
-    correct = sum(row.get("label") in {"CORRECT_CAUSAL", "PLAUSIBLE_CAUSAL", "NO_PUBLIC_CATALYST"} and record.get("final_driver_status") in {"CONFIRMED", "PLAUSIBLE_NOT_VERIFIED", "NO_CATALYST_FOUND"} for row, record in labeled)
-    fp = sum(row.get("label") == "FALSE_POSITIVE" for row, _ in labeled)
-    fn = sum(row.get("label") == "FALSE_NEGATIVE" for row, _ in labeled)
-    total = len(labeled)
-    return {"labeled_records": total, "precision_on_labeled": correct / total if total else None, "false_positive_rate_on_labeled": fp / total if total else None, "false_negative_rate_on_labeled": fn / total if total else None}
+    event, causal = empty(), empty()
+    correct = unassessed = excluded = wrong_event = 0
+    for row, record in labeled:
+        expected = expected_status.get(str(row.get("label", "")).upper())
+        if expected is None:
+            excluded += 1
+            continue
+        truth_positive = expected != "NO_CATALYST_FOUND"
+        status = record.get("final_driver_status")
+        selected = normalize(record.get("selected_event"))
+        wanted = normalize(row.get("expected_event"))
+        event_matches = bool(selected and selected == wanted) if wanted else True
+        predicted_causal = status in positive_statuses
+        attribution_matches = status == expected and event_matches and (truth_positive or not selected)
+        score(causal, truth_positive, predicted_causal, attribution_matches)
+        correct += int(attribution_matches)
+        if truth_positive and not wanted:
+            unassessed += 1
+        else:
+            score(event, truth_positive, bool(selected), event_matches)
+            wrong_event += int(truth_positive and bool(selected) and not event_matches)
+    event_result, causal_result = summarize(event), summarize(causal)
+    return {"labeled_records": causal["support"], "matched_label_records": len(labeled),
+            "unmatched_label_records": len(labels) - len(labeled), "excluded_label_records": excluded,
+            "correct_records": correct, "accuracy_on_labeled": correct / causal["support"] if causal["support"] else None,
+            "precision_on_labeled": causal_result["precision"], "recall_on_labeled": causal_result["recall"],
+            "false_positive_rate_on_labeled": causal_result["false_positive_rate"],
+            "false_negative_rate_on_labeled": causal_result["false_negative_rate"],
+            "event_identification": event_result, "causal_attribution": causal_result,
+            "event_identity_unassessed": unassessed, "wrong_event_predictions": wrong_event}
 
 
 def _p95(values: list[float]) -> float:

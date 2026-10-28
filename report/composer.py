@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 from report.selectors import build_indices, build_macro, build_market_overview, build_sectors, highlights, notable_moves, validate_movers
-from news.editorial import build_public_stories
+from news.editorial import build_public_stories, public_hebrew_copy, public_story_relevance
 from drivers import build_driver_analysis
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -126,7 +126,7 @@ def compose_daily_report(logger: logging.Logger | None = None) -> Path:
         live_news_payload = load_snapshot(OUTPUT_DIR / "live_news_v3_snapshot.json", "live_news")
     except ReportCompositionError:
         live_news_payload = {}
-    live_stories = select_verified_live_stories(OUTPUT_DIR / "live_news_v3_snapshot.json", market_date)
+    live_stories = select_verified_live_stories(OUTPUT_DIR / "live_news_v3_snapshot.json", market_date, mover_symbols={str(item.get("symbol", "")).upper() for item in all_movers})
     if live_stories:
         verified_stories = merge_verified_stories(verified_stories, live_stories)
         logger.info("Verified live stories selected: %d", len(live_stories))
@@ -228,7 +228,7 @@ def join_mover(mover: dict[str, Any], catalyst: dict[str, Any] | None) -> dict[s
 
 def select_verified_stories(catalysts: dict[str, Any], market_date: str | None = None) -> list[dict[str, Any]]:
     """Return only public-safe, verified event stories; price moves are not stories."""
-    stories = build_public_stories(catalysts, market_date)
+    stories = [story for story in build_public_stories(catalysts, market_date) if story.get("translation_status") != "UNTRANSLATED"]
     # Keep the legacy symbol field for internal callers while exposing the new public schema.
     for story in stories:
         symbols = story.get("affected_symbols", [])
@@ -246,7 +246,7 @@ def select_unconfirmed_leads(catalysts: dict[str, Any]) -> list[dict[str, Any]]:
     return leads[:5]
 
 
-def select_verified_live_stories(path: Path, market_date: str) -> list[dict[str, Any]]:
+def select_verified_live_stories(path: Path, market_date: str, *, mover_symbols: set[str] | None = None) -> list[dict[str, Any]]:
     """Load only the public-safe verified stories from the optional live snapshot."""
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -258,11 +258,15 @@ def select_verified_live_stories(path: Path, market_date: str) -> list[dict[str,
     for item in payload.get("stories", []):
         if not isinstance(item, dict) or item.get("verification") != "VERIFIED" or item.get("editorial_eligible") is not True:
             continue
+        relevance = public_story_relevance(item, mover_symbols=mover_symbols)
+        copy = public_hebrew_copy(item)
+        if relevance is None or copy["translation_status"] == "UNTRANSLATED":
+            continue
         symbols = [str(value) for value in item.get("affected_symbols", []) if value]
         primary_name = item.get("primary_source_name") or item.get("source_name") or "מקור מאומת"
         story = {
-            "title_he": item.get("title_he") or item.get("title"),
-            "summary_he": item.get("summary_he") or item.get("summary") or item.get("title"),
+            **copy,
+            "relevance_reason": relevance,
             "category": item.get("category") or "COMPANY",
             "published_at": item.get("published_at"),
             "source_name": primary_name,

@@ -177,7 +177,7 @@ def test_mismatched_dates_raise_market_date_mismatch(monkeypatch, tmp_path):
 
 def test_catalyst_selection_and_lead_visibility_rules():
     catalysts = {
-        "SAFE": {"catalyst_status": "CONFIRMED", "evidence_quality": "STRONG", "editorial_eligible": True, "catalyst_type": "FILING", "headline": "Verified", "event_datetime": "2026-09-25T12:00:00+00:00", "primary_source": {"source_name": "SEC", "source_tier": 1, "publisher_domain": "sec.gov", "published_at": "2026-09-25T12:00:00+00:00"}},
+        "SAFE": {"catalyst_status": "CONFIRMED", "evidence_quality": "STRONG", "editorial_eligible": True, "catalyst_type": "FILING", "headline": "SAFE Announces Acquisition of Example", "event_datetime": "2026-09-25T12:00:00+00:00", "primary_source": {"source_name": "SEC", "source_tier": 1, "publisher_domain": "sec.gov", "published_at": "2026-09-25T12:00:00+00:00"}},
         "POSSIBLE": {"catalyst_status": "POSSIBLE", "evidence_quality": "STRONG", "editorial_eligible": False, "catalyst_type": "OTHER", "headline": "Possible"},
         "BAD": {"catalyst_status": "NOT_CONFIRMED", "evidence_quality": "MODERATE", "catalyst_type": "OTHER", "headline": "Unconfirmed"},
     }

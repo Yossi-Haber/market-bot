@@ -7,12 +7,86 @@ from datetime import date, datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
+from news.event_language import asserted_event_type, is_future_preview
+
 CATEGORY_MAP = {
     "EARNINGS": "EARNINGS", "GUIDANCE": "EARNINGS", "M_AND_A": "M&A", "FDA": "REGULATORY", "REGULATORY": "REGULATORY",
     "FILING": "COMPANY", "CONTRACT": "COMPANY", "PRODUCT": "TECH_PRODUCT", "TECH_PRODUCT": "TECH_PRODUCT", "MACRO_RELEASE": "MACRO_RELEASE", "CENTRAL_BANK": "CENTRAL_BANK",
     "GEOPOLITICS": "GEOPOLITICS", "COMMODITIES": "COMMODITIES", "COMPANY": "COMPANY", "OTHER": "OTHER",
 }
 EVENT_CATEGORIES = {"COMPANY", "EARNINGS", "M&A", "REGULATORY", "MACRO_RELEASE", "CENTRAL_BANK", "TECH_PRODUCT", "GEOPOLITICS", "COMMODITIES"}
+
+
+def public_story_relevance(story: dict[str, Any], *, tracked_symbols: set[str] | None = None, mover_symbols: set[str] | None = None) -> str | None:
+    """Official provenance alone does not make a routine company filing news."""
+    category = str(story.get("category") or story.get("catalyst_type") or "OTHER").upper()
+    title = str(story.get("title") or story.get("headline") or story.get("title_he") or "")
+    if is_future_preview(title, str(story.get("summary") or "")):
+        return None
+    if category in {"MACRO_RELEASE", "CENTRAL_BANK", "GEOPOLITICS", "COMMODITIES"}:
+        return "MARKET_WIDE_EVENT"
+    material = bool(asserted_event_type(title)) or bool(re.search(
+        r"\b(?:announc\w*|report\w*|launch\w*|introduc\w*|sign\w*|award\w*|approv\w*|halt\w*|delay\w*|file\w*)\b.{0,65}\b(?:guidance|outlook|new (?:product|chip)|contract|agreement|lawsuit|bankruptcy|certification)\b", title, re.I))
+    material = material or story.get("material_company_announcement") is True
+    material = material or bool(re.search(r"(?:פרסמ[הו]|דיווח[הו]|הודיע[הו]|חתמ[הו]|עדכנ[הו]|אישר[הו]).{0,45}(?:תוצאות|תחזית|רכיש|מיזוג|חוזה|הסכם|מוצר|תביעה)", title))
+    if not material:
+        return None
+    if tracked_symbols is None:
+        from movers import load_universe
+        tracked_symbols = {item.symbol.upper() for item in load_universe()}
+    symbols = {str(symbol).upper() for symbol in story.get("affected_symbols", [])}
+    if symbols & (mover_symbols or set()):
+        return "MOVER_MATERIAL_EVENT"
+    if symbols & tracked_symbols:
+        return "TRACKED_MATERIAL_EVENT"
+    # An explicit material announcement can merit publication outside the
+    # curated universe. Routine ownership/forms remain excluded above.
+    if story.get("explicit_market_link") is True or story.get("scope") in {"MARKET", "SECTOR"}:
+        return "BROADER_MATERIAL_EVENT"
+    return "UNTRACKED_MATERIAL_EVENT"
+
+
+def public_hebrew_copy(story: dict[str, Any]) -> dict[str, Any]:
+    """Preserve supplied Hebrew, or use narrowly supported factual templates.
+
+    Unhandled English stays in the original fields and is explicitly marked;
+    it never becomes Hebrew merely because of a field name.
+    """
+    hebrew = lambda value: bool(re.search(r"[א-ת]{2,}", str(value or "")))
+    title = str(story.get("title_he") or story.get("title") or story.get("headline") or "")
+    summary = str(story.get("summary_he") or story.get("summary") or "")
+    source = story.get("primary_source_name") or story.get("source_name") or "המקור המאומת"
+    if hebrew(title):
+        return {"title_he": title, "summary_he": summary if hebrew(summary) else f"פרסום האירוע אומת מול {source}.", "translation_status": "HEBREW_SUPPLIED"}
+    symbols = story.get("affected_symbols") or [story.get("symbol") or ""]
+    symbol = str(symbols[0]) if len(symbols) == 1 else ""
+    event = asserted_event_type(title)
+    public_title = None
+    if not is_future_preview(title, summary):
+        if symbol and event == "EARNINGS_RESULTS":
+            public_title = f"{symbol} פרסמה תוצאות כספיות"
+        elif symbol and (event == "GUIDANCE_CHANGE" or re.search(r"\b(?:announc\w*|updat\w*|releas\w*)\b.{0,25}\b(?:guidance|outlook)\b", title, re.I)):
+            action = "הורידה" if re.search(r"\b(?:cuts?|cut|lowers?|lowered|reduc\w*)\b", title, re.I) else "העלתה" if re.search(r"\b(?:raises?|raised)\b", title, re.I) else "עדכנה"
+            metric = "תחזית ההכנסות" if re.search(r"\brevenue\b", title, re.I) else "התחזית"
+            quarter = re.search(r"\bQ([1-4])\b", title, re.I)
+            suffix = f" לרבעון { {'1': 'הראשון', '2': 'השני', '3': 'השלישי', '4': 'הרביעי'}[quarter.group(1)]}" if quarter else ""
+            public_title = f"{symbol} {action} את {metric}{suffix}"
+        elif symbol and event == "M_AND_A":
+            public_title = f"{symbol} הודיעה על רכישה או מיזוג"
+        elif symbol and re.search(r"\b(?:announc\w*|introduc\w*|launch\w*)\b.{0,30}\bnew (?:product|chip)\b", title, re.I):
+            public_title = f"{symbol} הודיעה על מוצר חדש"
+        elif str(story.get("category")) == "MACRO_RELEASE" and re.search(r"\b(?:cpi|inflation)\b", title, re.I):
+            public_title = "פורסם דוח האינפלציה"
+        elif str(story.get("category")) == "MACRO_RELEASE" and re.search(r"\b(?:gdp|gross domestic product)\b", title, re.I):
+            public_title = "פורסם נתון התוצר"
+        elif str(story.get("category")) == "CENTRAL_BANK" and re.search(r"\b(?:rate decision|interest rate)\b", title, re.I):
+            public_title = "פורסמה החלטת ריבית"
+    if public_title:
+        return {"title_he": public_title, "summary_he": f"פרסום האירוע אומת מול {source}; לא אומת קשר סיבתי לתנועת המניה." if symbol else f"הנתון פורסם על ידי {source}.", "translation_status": "DETERMINISTIC_HEBREW"}
+    category_notice = {"MACRO_RELEASE": "פורסם עדכון כלכלי מאומת", "CENTRAL_BANK": "פורסמה הודעה של בנק מרכזי", "GEOPOLITICS": "פורסם דיווח גאופוליטי מאומת", "COMMODITIES": "פורסם עדכון מאומת בשוק הסחורות"}.get(str(story.get("category")))
+    if category_notice and not is_future_preview(title, summary):
+        return {"title_he": category_notice, "summary_he": f"כותרת המקור לא תורגמה. הפרסום אומת מול {source}.", "translation_status": "UNTRANSLATED_CATEGORY_NOTICE"}
+    return {"title_he": None, "summary_he": None, "translation_status": "UNTRANSLATED"}
 
 
 def _parse_time(value: Any) -> datetime | None:
@@ -127,10 +201,14 @@ def build_public_stories(catalysts: dict[str, Any], market_date: str | None = No
         title = str(catalyst.get("headline") or "").strip()
         if not title:
             continue
+        relevance = public_story_relevance({**catalyst, "title": title, "category": category, "affected_symbols": [symbol]})
+        if relevance is None:
+            continue
         published_at = source.get("published_at") or catalyst.get("published_at") or catalyst.get("event_datetime")
         story = {
-            "title_he": title,
-            "summary_he": str(catalyst.get("summary_he") or title),
+            "title": title,
+            "title_he": catalyst.get("title_he"),
+            "summary_he": catalyst.get("summary_he"),
             "summary": str(catalyst.get("summary") or catalyst.get("summary_he") or title),
             "category": category,
             "published_at": published_at,
@@ -145,7 +223,9 @@ def build_public_stories(catalysts: dict[str, Any], market_date: str | None = No
             "primary_source_domain": _domain(source),
             "primary_source_url": source.get("url") or source.get("source_url"),
             "primary_source_type": "OFFICIAL" if source_quality(source) == 1 else "TIER2" if source_quality(source) == 2 else "OTHER",
+            "relevance_reason": relevance,
         }
+        story.update(public_hebrew_copy(story))
         if not published_at:
             continue
         if market_date:
