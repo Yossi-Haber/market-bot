@@ -672,6 +672,10 @@ def _safe_journal_context(payload: dict[str, Any]) -> dict[str, Any]:
     recipient = payload.get("recipient_hmac")
     if recipient in TEST_RECIPIENTS:
         context["recipient_slot"] = "A" if recipient == TEST_RECIPIENTS[0] else "B"
+    if isinstance(payload.get("attempt_id"), str) and re.fullmatch(r"3c[0-9a-f]{30}", payload["attempt_id"]):
+        context["attempt_id"] = payload["attempt_id"]
+    if payload.get("sender_stopped") is True:
+        context["sender_stopped"] = True
     for name in ("status", "from", "to"):
         if isinstance(payload.get(name), str) and re.fullmatch(r"[A-Z_]{2,40}", payload[name]):
             context[name] = payload[name]
@@ -686,6 +690,8 @@ def _append_operation_event(event: dict[str, Any]) -> None:
     with _JOURNAL_LOCK:
         with OPERATION_JOURNAL_FILE.open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
 
 
 def state_snapshot(api_secret: str, *, market_date: str | None = None) -> dict[str, Any]:

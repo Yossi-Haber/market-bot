@@ -8,18 +8,20 @@ import crypto from "node:crypto";
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const wrangler = path.join(projectDir, "node_modules", "wrangler", "bin", "wrangler.js");
-const dbName = "marketbot-state";
+const dbName = "marketbot-local-test";
 const apiSecret = "synthetic-test-secret-".padEnd(48, "x");
 const adminSecret = "synthetic-test-admin-secret-".padEnd(48, "y");
 const baseUrl = "http://127.0.0.1:8787";
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), "marketbot-d1-local-"));
+const localConfig = path.join(tempRoot, "wrangler.local.json");
 const passed = [];
 let server;
 let serverOutput = "";
 let activeTest = "startup";
 
 function cli(args) {
-  const result = spawnSync(process.execPath, [wrangler, ...args], {
+  if (!args.includes("--local") || args.includes("--remote")) throw new Error("LOCAL_ONLY_COMMAND_REQUIRED");
+  const result = spawnSync(process.execPath, [wrangler, ...args, "--config", localConfig], {
     cwd: projectDir,
     encoding: "utf8",
     timeout: 45_000,
@@ -47,7 +49,7 @@ async function withDatabaseCli(callback) {
 async function startServer({ testMode = false, testDatabaseId = "8049a22c-eb1f-4e9d-928d-29b35dcc6f70", testAdminSecret = adminSecret } = {}) {
   if (server && server.exitCode === null) return;
   serverOutput = "";
-  const args = [wrangler, "dev", "--local", "--ip", "127.0.0.1", "--port", "8787", "--persist-to", tempRoot, "--var", `STATE_API_HMAC_SECRET:${apiSecret}`, "--var", `STATE_ADMIN_HMAC_SECRET:${testAdminSecret}`];
+  const args = [wrangler, "dev", "--config", localConfig, "--local", "--ip", "127.0.0.1", "--port", "8787", "--persist-to", tempRoot, "--var", `STATE_API_HMAC_SECRET:${apiSecret}`, "--var", `STATE_ADMIN_HMAC_SECRET:${testAdminSecret}`];
   if (testMode) args.push("--var", "MARKETBOT_TEST_MODE:phase3c-synthetic-mutations-v1", "--var", `MARKETBOT_TEST_DATABASE_ID:${testDatabaseId}`, "--var", "MARKETBOT_TEST_WORKER_NAME:marketbot-state-api-test");
   server = spawn(process.execPath, args, {
     cwd: projectDir,
@@ -112,6 +114,13 @@ function check(name, callback) {
 }
 
 try {
+  await writeFile(localConfig, JSON.stringify({
+    name: "marketbot-local-test", main: path.join(projectDir, "src", "index.ts"),
+    compatibility_date: "2026-10-14",
+    d1_databases: [{ binding: "DB", database_name: dbName,
+      database_id: "00000000-0000-4000-8000-000000000001",
+      migrations_dir: path.join(projectDir, "migrations") }],
+  }));
   cli(["d1", "migrations", "apply", dbName, "--local", "--persist-to", tempRoot]);
   await startServer();
 
@@ -187,6 +196,13 @@ try {
     const state = await request("state.get", {});
     assert.equal(state.status, 200);
     assert.equal(state.data.test_mutation_mode, true);
+    const protocol2 = spawnSync("python", [path.join(projectDir, "scripts", "protocol2_integration.py"), "--local", "--journal-dir", tempRoot], {
+      cwd: projectDir, encoding: "utf8", timeout: 60_000,
+    });
+    assert.equal(protocol2.status, 0, protocol2.stdout + protocol2.stderr);
+    assert.match(protocol2.stdout, /PROTOCOL2_INTEGRATION=PASS/);
+    console.log(protocol2.stdout.trim());
+
     assert.deepEqual(state.data.ownership, { cloud_quota_exclusive: false, windows_sender_disabled: false, cloud_delivery_enabled: false });
 
     const prefixId = (suffix) => `3c${suffix.padStart(30, "0")}`;
@@ -277,6 +293,28 @@ try {
     const response = await request("ownership.set", { cloud_quota_exclusive: true, windows_sender_disabled: true, cloud_delivery_enabled: true }, { admin: true });
     assert.equal(response.status, 200);
     assert.equal((await request("state.get", {})).data.ownership.cloud_delivery_enabled, true);
+  });
+
+  await check("protocol 2 recovery rollback in real local D1", async () => {
+    const date = "2099-03-01", runId = crypto.randomBytes(16).toString("hex");
+    const slot = "hmac256:" + "f".repeat(64);
+    assert.equal((await request("run.claim", {market_date: date, run_id: runId})).status, 200);
+    assert.equal((await request("run.transition", {market_date: date, run_id: runId, from: "CLAIMED", to: "RUNNING"})).status, 200);
+    const begin = await request("delivery.begin", {market_date: date, recipient_hmac: slot, attempt_id: crypto.randomBytes(16).toString("hex"), reviewed_retry: false});
+    assert.equal(begin.data.authorized, true);
+    await withDatabaseCli(() => sqlRows("CREATE TRIGGER protocol2_failure BEFORE UPDATE ON delivery_recipient WHEN OLD.market_date='2099-03-01' BEGIN SELECT RAISE(ABORT,'synthetic'); END"));
+    const operationId = crypto.randomBytes(16).toString("hex");
+    const payload = {market_date: date, run_id: runId, sender_stopped: true};
+    assert.equal((await request("run.recover", payload, {admin: true, operationId})).status, 503);
+    const state = await request("state.get", {market_date: date, recipient_hmac: slot});
+    assert.equal(state.data.run.status, "RUNNING");
+    assert.equal(state.data.delivery_recipient.status, "SENDING");
+    assert.equal(state.data.delivery_recipient.attempt_id, begin.data.attempt_id);
+    await withDatabaseCli(() => {
+      assert.equal(sqlRows(`SELECT COUNT(*) AS n FROM operations WHERE operation_id='${operationId}'`)[0].n, 0);
+      sqlRows("DROP TRIGGER protocol2_failure");
+    });
+    assert.equal((await request("run.recover", payload, {admin: true})).data.status, "DELIVERY_UNKNOWN");
   });
 
   await check("concurrent quota contention allows exactly eight of sixteen", async () => {
