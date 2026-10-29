@@ -76,29 +76,61 @@ def mask_chat_id(chat_id: str) -> str:
     return f"***{chat_id[-4:]}" if len(chat_id) > 4 else "***"
 
 
-def map_telegram_response(response: Any) -> str | None:
-    """Map status and safe Telegram error descriptions to internal codes."""
+def classify_telegram_response(response: Any, *, expect_message: bool = True) -> tuple[str, str | None]:
+    """Require a complete sendPhoto acknowledgment; ambiguity is never safe failure."""
     status = getattr(response, "status_code", None)
-    if status in (401, 403):
-        return "TELEGRAM_AUTH_FAILED"
-    if status == 429:
-        return "TELEGRAM_RATE_LIMITED"
-    if status == 400:
-        try:
-            payload = response.json()
-        except (ValueError, AttributeError):
-            payload = {}
-        description = str(payload.get("description", "")).lower() if isinstance(payload, dict) else ""
-        return "TELEGRAM_CHAT_NOT_FOUND" if "chat not found" in description else "TELEGRAM_API_ERROR"
-    if status is None or status >= 400:
-        return "TELEGRAM_API_ERROR"
+    if not isinstance(status, int) or isinstance(status, bool) or status >= 500:
+        return "UNKNOWN", "TELEGRAM_SERVER_ERROR" if isinstance(status, int) and status >= 500 else "TELEGRAM_RESPONSE_INVALID"
     try:
         payload = response.json()
     except (ValueError, AttributeError):
-        payload = {}
-    if isinstance(payload, dict) and payload.get("ok") is False:
-        return "TELEGRAM_API_ERROR"
-    return None
+        return "UNKNOWN", "TELEGRAM_RESPONSE_INVALID"
+    if not isinstance(payload, dict):
+        return "UNKNOWN", "TELEGRAM_RESPONSE_INVALID"
+    if status in {400, 401, 403, 404, 429} and payload.get("ok") is False and type(payload.get("error_code")) is int and payload["error_code"] == status:
+        if status in {401, 403}:
+            error = "TELEGRAM_AUTH_FAILED"
+        elif status == 429:
+            error = "TELEGRAM_RATE_LIMITED"
+        elif status == 400 and "chat not found" in str(payload.get("description", "")).lower():
+            error = "TELEGRAM_CHAT_NOT_FOUND"
+        else:
+            error = "TELEGRAM_API_ERROR"
+        return "FAILED_SAFE", error
+    result = payload.get("result")
+    message_valid = isinstance(result, dict) and type(result.get("message_id")) is int and result["message_id"] > 0
+    if 200 <= status < 300 and payload.get("ok") is True and (message_valid or not expect_message):
+        return "SENT", None
+    return "UNKNOWN", "TELEGRAM_RESPONSE_INVALID"
+
+
+def map_telegram_response(response: Any) -> str | None:
+    """Shared non-delivery API error mapping (for example getUpdates)."""
+    status = getattr(response, "status_code", None)
+    if status in {401, 403}:
+        return "TELEGRAM_AUTH_FAILED"
+    if status == 429:
+        return "TELEGRAM_RATE_LIMITED"
+    return classify_telegram_response(response, expect_message=False)[1]
+
+
+def _persist_outcome(ledger: Any, market_date: str, slot: str, status: str, error: str | None, logger: logging.Logger) -> str:
+    """A lost state acknowledgment never authorizes another Telegram request."""
+    try:
+        ledger.record_outcome(market_date, slot, status, safe_error=error)
+        return status
+    except Exception:
+        if hasattr(ledger, "resolve_outcome"):
+            try:
+                resolved = ledger.resolve_outcome(market_date, slot)
+                # Only an authoritative result for this attempt can settle it.
+                if resolved == "SENT" or resolved == "UNKNOWN" or (resolved == "FAILED_SAFE" and status == "FAILED_SAFE"):
+                    logger.info("Durable delivery outcome reconciled: %s", resolved)
+                    return resolved
+            except Exception:
+                pass
+        logger.error("Delivery outcome unresolved; recipient remains non-sendable")
+        return "UNKNOWN"
 
 
 def caption_from_report(report_data: dict[str, Any]) -> str:
@@ -148,6 +180,10 @@ def run_delivery(
     output_dir = output_dir or OUTPUT_DIR
     logger = logger or logging.getLogger("market_bot.delivery")
     logger.info("Telegram delivery started")
+    if not dry_run and durable_ledger is None and (os.getenv("MARKETBOT_STATE_BACKEND", "").strip().lower() == "d1" or os.getenv("MARKETBOT_PERSISTENT_DELIVERY_MODE") == "1"):
+        logger.error("DURABLE_DELIVERY_LEDGER_REQUIRED")
+        write_delivery_manifest({"channel": "telegram", "status": "FAILED", "error": "DURABLE_DELIVERY_LEDGER_REQUIRED"}, output_dir)
+        return 1
     v3_manifest = output_dir / "daily_report_v3_visual_validation.json"
     v3_image = output_dir / "daily_report_card_v3.png"
     manifest_path = v3_manifest if v3_manifest.is_file() else output_dir / "daily_report_visual_validation.json"
@@ -181,6 +217,11 @@ def run_delivery(
 
     token, chat_ids = load_telegram_config()
     logger.info("Telegram config loaded: token=%s, recipients=%d", "yes" if token else "no", len(chat_ids))
+    # .env loading can select cloud mode after the initial entry-point guard.
+    if not dry_run and durable_ledger is None and (os.getenv("MARKETBOT_STATE_BACKEND", "").strip().lower() == "d1" or os.getenv("MARKETBOT_PERSISTENT_DELIVERY_MODE") == "1"):
+        logger.error("DURABLE_DELIVERY_LEDGER_REQUIRED")
+        write_delivery_manifest({"channel": "telegram", "status": "FAILED", "error": "DURABLE_DELIVERY_LEDGER_REQUIRED"}, output_dir)
+        return 1
     if dry_run:
         if chat_ids:
             logger.info("Telegram dry-run: WOULD_SEND to %d recipients", len(chat_ids))
@@ -208,51 +249,50 @@ def run_delivery(
             if durable_ledger is not None:
                 slot_id = durable_ledger.slot_id(chat_id)
                 try:
-                    durable_ledger.begin_send(market_date, chat_id)
+                    slot_id = durable_ledger.begin_send(market_date, chat_id)
                 except Exception as exc:
                     # A pre-send publication/duplicate-state failure must block
                     # transport invocation. The durable slot remains non-sendable.
-                    results.append({"recipient_slot": slot_id, "chat_id": None, "status": "BLOCKED", "error": type(exc).__name__})
+                    status = "BLOCKED"
+                    if hasattr(durable_ledger, "begin_failure_status"):
+                        try:
+                            status = durable_ledger.begin_failure_status(market_date, slot_id, exc)
+                        except Exception:
+                            status = "UNKNOWN"
+                    results.append({"recipient_slot": slot_id, "status": status, "error": type(exc).__name__})
                     logger.error("Recipient %d/%d blocked before send: %s", index, len(chat_ids), type(exc).__name__)
                     continue
             response = transport.send_photo(token, chat_id, image_path, caption)
-            error = map_telegram_response(response)
-            if error:
-                if durable_ledger is not None and slot_id:
-                    durable_ledger.record_outcome(market_date, slot_id, "FAILED_SAFE", safe_error=error)
-                raise TelegramDeliveryError(error)
+            status, error = classify_telegram_response(response)
             if durable_ledger is not None and slot_id:
-                durable_ledger.record_outcome(market_date, slot_id, "SENT")
-            results.append(_recipient_result(durable_ledger is not None, slot_id, chat_id, "SENT"))
-            logger.info("Recipient %d/%d sent", index, len(chat_ids))
-        except TelegramDeliveryError as exc:
-            results.append(_recipient_result(durable_ledger is not None, slot_id, chat_id, "FAILED_SAFE" if durable_ledger is not None else "FAILED", str(exc)))
-            logger.error("Recipient %d/%d failed: %s", index, len(chat_ids), str(exc))
+                status = _persist_outcome(durable_ledger, market_date, slot_id, status, error, logger)
+            results.append(_recipient_result(durable_ledger is not None, slot_id, chat_id, status, error))
+            logger.info("Recipient %d/%d outcome: %s", index, len(chat_ids), status)
         except requests.Timeout:
+            status = "UNKNOWN"
             if durable_ledger is not None and slot_id:
-                durable_ledger.record_outcome(market_date, slot_id, "UNKNOWN", safe_error="TELEGRAM_TIMEOUT")
-            results.append(_recipient_result(durable_ledger is not None, slot_id, chat_id, "UNKNOWN" if durable_ledger is not None else "FAILED", "TELEGRAM_TIMEOUT"))
+                status = _persist_outcome(durable_ledger, market_date, slot_id, "UNKNOWN", "TELEGRAM_TIMEOUT", logger)
+            results.append(_recipient_result(durable_ledger is not None, slot_id, chat_id, status, "TELEGRAM_TIMEOUT"))
             logger.error("Recipient %d/%d failed: TELEGRAM_TIMEOUT", index, len(chat_ids))
         except requests.RequestException:
+            status = "UNKNOWN"
             if durable_ledger is not None and slot_id:
-                durable_ledger.record_outcome(market_date, slot_id, "UNKNOWN", safe_error="TELEGRAM_NETWORK_ERROR")
-            results.append(_recipient_result(durable_ledger is not None, slot_id, chat_id, "UNKNOWN" if durable_ledger is not None else "FAILED", "TELEGRAM_NETWORK_ERROR"))
+                status = _persist_outcome(durable_ledger, market_date, slot_id, "UNKNOWN", "TELEGRAM_NETWORK_ERROR", logger)
+            results.append(_recipient_result(durable_ledger is not None, slot_id, chat_id, status, "TELEGRAM_NETWORK_ERROR"))
             logger.error("Recipient %d/%d failed: TELEGRAM_NETWORK_ERROR", index, len(chat_ids))
         except Exception:
+            status = "UNKNOWN"
             if durable_ledger is not None and slot_id:
                 # The send call may have reached Telegram before an unexpected
                 # local exception; preserve the no-duplicate safety invariant.
-                try:
-                    durable_ledger.record_outcome(market_date, slot_id, "UNKNOWN", safe_error="TELEGRAM_API_ERROR")
-                except Exception:
-                    logger.error("Recipient %d/%d outcome persistence failed; durable state remains non-sendable", index, len(chat_ids))
-            results.append(_recipient_result(durable_ledger is not None, slot_id, chat_id, "UNKNOWN" if durable_ledger is not None else "FAILED", "TELEGRAM_API_ERROR"))
+                status = _persist_outcome(durable_ledger, market_date, slot_id, "UNKNOWN", "TELEGRAM_API_ERROR", logger)
+            results.append(_recipient_result(durable_ledger is not None, slot_id, chat_id, status, "TELEGRAM_API_ERROR"))
             logger.error("Recipient %d/%d failed: TELEGRAM_API_ERROR", index, len(chat_ids))
 
     sent = sum(result["status"] == "SENT" for result in results)
     failed = len(results) - sent
     status = "SENT" if failed == 0 else "FAILED" if sent == 0 else "PARTIAL"
-    if durable_ledger is not None and any(result.get("status") == "UNKNOWN" for result in results):
+    if any(result.get("status") == "UNKNOWN" for result in results):
         status = "UNKNOWN"
     logger.info("Telegram delivery completed: %s", status)
     write_delivery_manifest({"channel": "telegram", "status": status, "sent_at": datetime.now(timezone.utc).isoformat(), "report_date": report_data.get("market_date"), "image": image_path.name, "recipients": results, "summary": {"total": len(results), "sent": sent, "failed": failed}}, output_dir)

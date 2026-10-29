@@ -55,6 +55,22 @@ class D1DeliveryDenied(D1StateError):
     """The durable delivery state does not authorize another Telegram send."""
 
 
+class D1DeliveryAttempt(str):
+    """String-compatible recipient slot with its immutable send authorization."""
+
+    def __new__(cls, slot: str, attempt_id: str):
+        result = super().__new__(cls, slot)
+        object.__setattr__(result, "_attempt_id", attempt_id)
+        return result
+
+    def __setattr__(self, name, value):
+        raise AttributeError("Delivery attempt authorization is immutable")
+
+    @property
+    def attempt_id(self) -> str:
+        return self._attempt_id
+
+
 class D1StateClient:
     """HTTP adapter; mutation retries reuse an operation ID and never reauthorize."""
 
@@ -215,8 +231,13 @@ class D1StateClient:
             payload["reason_code"] = reason_code
         return self.call("run.transition", payload)
 
-    def recover_run(self, market_date: str, run_id: str) -> dict[str, Any]:
-        return self.call("run.recover", {"market_date": market_date, "run_id": run_id})
+    def recover_run(self, market_date: str, run_id: str, *, sender_stopped: bool = False) -> dict[str, Any]:
+        if sender_stopped is not True:
+            raise D1StateError("SENDER_STOP_CONFIRMATION_REQUIRED")
+        result = self.call("run.recover", {"market_date": market_date, "run_id": run_id, "sender_stopped": True}, admin=True)
+        if result.get("applied") is not True:
+            raise D1StateError("D1_RUN_RECOVERY_NOT_APPLIED")
+        return result
 
     def set_ownership(self, *, cloud_quota_exclusive: bool, windows_sender_disabled: bool, cloud_delivery_enabled: bool) -> dict[str, Any]:
         return self.call("ownership.set", {"cloud_quota_exclusive": cloud_quota_exclusive, "windows_sender_disabled": windows_sender_disabled, "cloud_delivery_enabled": cloud_delivery_enabled}, admin=True)
@@ -252,30 +273,65 @@ class D1DeliveryLedger:
         digest = hmac.new(self._key, str(chat_id).encode("utf-8"), hashlib.sha256).hexdigest()
         return f"hmac256:{digest}"
 
-    def begin_send(self, market_date: str, chat_id: str, *, reviewed_retry: bool = False) -> str:
+    def begin_send(self, market_date: str, chat_id: str, *, reviewed_retry: bool = False, sender_stopped: bool = False) -> str:
         slot = self.slot_id(chat_id)
-        try:
-            result = self.client.call("delivery.begin", {"market_date": market_date, "recipient_hmac": slot, "attempt_id": uuid.uuid4().hex, "reviewed_retry": reviewed_retry})
-        except D1StateError as exc:
-            raise D1DeliveryDenied("DELIVERY_SLOT_NOT_SENDABLE") from exc
-        if result.get("authorized") is not True:
-            raise D1DeliveryDenied("DELIVERY_SEND_NOT_AUTHORIZED")
-        return slot
+        if reviewed_retry and sender_stopped is not True:
+            raise D1DeliveryDenied("SENDER_STOP_CONFIRMATION_REQUIRED")
+        attempt_id = uuid.uuid4().hex
+        payload = {"market_date": market_date, "recipient_hmac": slot, "attempt_id": attempt_id, "reviewed_retry": reviewed_retry}
+        if reviewed_retry:
+            payload["sender_stopped"] = True
+        result = self.client.call("delivery.begin", payload, admin=reviewed_retry)
+        if result.get("authorized") is not True or result.get("attempt_id") != attempt_id:
+            raise D1OperationUncertain("D1_DELIVERY_AUTHORIZATION_INVALID", may_have_committed=True)
+        return D1DeliveryAttempt(slot, attempt_id)
 
     def record_outcome(self, market_date: str, slot: str, status: str, *, safe_error: str | None = None) -> None:
         if status not in {"SENT", "UNKNOWN", "FAILED_SAFE"}:
             raise ValueError("DELIVERY_OUTCOME_INVALID")
-        payload: dict[str, Any] = {"market_date": market_date, "recipient_hmac": slot, "status": status}
+        attempt_id = getattr(slot, "attempt_id", None)
+        if not attempt_id:
+            raise D1DeliveryDenied("DELIVERY_ATTEMPT_MISSING")
+        payload: dict[str, Any] = {"market_date": market_date, "recipient_hmac": str(slot), "attempt_id": attempt_id, "status": status}
         if safe_error:
             payload["safe_error"] = safe_error
         result = self.client.call("delivery.outcome", payload)
         if result.get("applied") is not True:
             raise D1DeliveryDenied("DELIVERY_OUTCOME_NOT_APPLIED")
 
+    def read_recipient(self, market_date: str, slot: str) -> dict[str, Any] | None:
+        """Read one HMAC slot; never infer non-delivery from an absent row."""
+        result = self.client.call("state.get", {"market_date": market_date, "recipient_hmac": str(slot)})
+        if result.get("schema_version") != 1 or result.get("delivery_protocol_version") != 2:
+            raise D1StateError("D1_DELIVERY_READ_UNSUPPORTED")
+        if "delivery_recipient" not in result:
+            raise D1StateError("D1_DELIVERY_READ_UNSUPPORTED")
+        row = result["delivery_recipient"]
+        if row is None:
+            return None
+        if not isinstance(row, dict) or row.get("status") not in {"SENDING", "SENT", "UNKNOWN", "FAILED_SAFE"} or not re.fullmatch(r"[0-9a-f]{32}", str(row.get("attempt_id", ""))):
+            raise D1StateError("D1_DELIVERY_STATE_INVALID")
+        return row
+
+    def resolve_outcome(self, market_date: str, slot: str) -> str:
+        """Resolve only this attempt's committed result, without any new send."""
+        row = self.read_recipient(market_date, slot)
+        if row is None or row.get("attempt_id") != getattr(slot, "attempt_id", None):
+            return "UNKNOWN"
+        return "UNKNOWN" if row["status"] == "SENDING" else row["status"]
+
+    def begin_failure_status(self, market_date: str, slot: str, error: Exception) -> str:
+        row = self.read_recipient(market_date, slot)
+        if row and row["status"] in {"SENDING", "UNKNOWN"}:
+            return "UNKNOWN"
+        if isinstance(error, D1DeliveryDenied) or (isinstance(error, D1StateError) and not error.may_have_committed and not isinstance(error, D1OperationUncertain)):
+            return "BLOCKED"
+        return "UNKNOWN"
+
     def reconcile_unknown(self, market_date: str, slot: str, *, confirmed_sent: bool, reviewer: str, reason: str) -> None:
         if not reviewer.strip() or not reason.strip():
             raise ValueError("DELIVERY_RECONCILIATION_REVIEW_REQUIRED")
         reviewer_hmac = self.slot_id("reviewer:" + reviewer.strip())
-        result = self.client.call("delivery.reconcile", {"market_date": market_date, "recipient_hmac": slot, "reviewer_hmac": reviewer_hmac, "confirmed_sent": confirmed_sent}, admin=True)
+        result = self.client.call("delivery.reconcile", {"market_date": market_date, "recipient_hmac": str(slot), "reviewer_hmac": reviewer_hmac, "confirmed_sent": confirmed_sent}, admin=True)
         if result.get("applied") is not True:
             raise D1DeliveryDenied("DELIVERY_RECONCILIATION_NOT_APPLIED")

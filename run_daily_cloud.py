@@ -97,15 +97,14 @@ def run(argv: list[str] | None = None, *, now: datetime | None = None) -> int:
         return 1
 
     prior = state["runs"].get(date_key)
-    if prior and prior.get("status") == "RUNNING":
-        started_at = _parse_utc(prior.get("started_at"))
-        if started_at and current.astimezone(timezone.utc) - started_at >= timedelta(minutes=30):
-            try:
-                _recover_interrupted_run(store, date_key, started_at)
-            except StateUnavailable as exc:
-                _write_manifest({"status": "BLOCKED", "market_date": date_key, "reason": str(exc)})
-                print(f"CLOUD_RECOVERY_BLOCKED: {exc}")
-                return 1
+    if prior:
+        started_at = _parse_utc(prior.get("started_at") or prior.get("claimed_at"))
+        stale = bool(started_at and current.astimezone(timezone.utc) - started_at >= timedelta(minutes=30))
+        # Age is diagnostic only. It cannot prove the original sender stopped.
+        reason = "INTERRUPTED_RUN_REQUIRES_OPERATOR_REVIEW" if prior.get("status") in {"CLAIMED", "RUNNING"} else "MARKET_DATE_ALREADY_CLAIMED_REQUIRES_REVIEW"
+        _write_manifest({"status": "BLOCKED", "market_date": date_key, "reason": reason, "run_status": prior.get("status"), "stale": stale, "automatic_recovery": False})
+        print(f"CLOUD_CLAIM_BLOCKED: {reason}")
+        return 1
 
     run_id = uuid.uuid4().hex
     try:
@@ -127,8 +126,11 @@ def run(argv: list[str] | None = None, *, now: datetime | None = None) -> int:
         if not args.send_telegram:
             pipeline_args.append("--skip-telegram")
         exit_code = run_existing_pipeline(pipeline_args)
-        _finish_run(store, date_key, "COMPLETE" if exit_code == 0 and not args.send_telegram else _delivery_status(exit_code, date_key))
-        _write_manifest({"status": "COMPLETE" if exit_code == 0 else "FAILED", "market_date": date_key, "run_id": run_id, "provider_calls": "see quota reservations", "telegram_sends": "per-recipient ledger" if args.send_telegram else 0})
+        disposition = ("COMPLETE" if exit_code == 0 else "FAILED") if not args.send_telegram else _delivery_status(exit_code, date_key, store=store)
+        _finish_run(store, date_key, disposition)
+        _write_manifest({"status": disposition, "market_date": date_key, "run_id": run_id, "provider_calls": "see quota reservations", "telegram_sends": "per-recipient ledger" if args.send_telegram else 0})
+        if disposition != "COMPLETE":
+            return int(exit_code) or 1
         return int(exit_code)
     except Exception:
         # A failure to publish final status leaves the durable claim non-sendable;
@@ -199,24 +201,28 @@ def _run_id_for_date(store: Any, market_date: str) -> str:
     return run_id
 
 
-def _recover_interrupted_run(store: GitHubStateStore, market_date: str, started_at: datetime) -> None:
+def _recover_interrupted_run(store: GitHubStateStore, market_date: str, started_at: datetime | None, *, sender_stopped: bool = False) -> None:
     """Mark an old in-flight sender UNKNOWN; never clear or retry its claim."""
+    if sender_stopped is not True:
+        raise StateUnavailable("SENDER_STOP_CONFIRMATION_REQUIRED")
     if type(store).__name__ == "D1StateClient":
         state = store.read()
         run = state.get("runs", {}).get(market_date, {})
         run_id = run.get("run_id")
-        if not run_id or run.get("status") != "RUNNING" or _parse_utc(run.get("started_at")) != started_at:
+        if not run_id or run.get("status") not in {"CLAIMED", "RUNNING"} or (run.get("status") == "RUNNING" and started_at is None) or _parse_utc(run.get("started_at")) != started_at:
             raise RuntimeError("INTERRUPTED_RUN_STATE_CHANGED")
-        store.recover_run(market_date, run_id)
+        store.recover_run(market_date, run_id, sender_stopped=True)
         return
     def mutate(state: dict[str, Any]) -> None:
         run_record = state["runs"].get(market_date)
-        if not run_record or run_record.get("status") != "RUNNING" or _parse_utc(run_record.get("started_at")) != started_at:
+        if not run_record or run_record.get("status") not in {"CLAIMED", "RUNNING"} or _parse_utc(run_record.get("started_at")) != started_at:
             raise RuntimeError("INTERRUPTED_RUN_STATE_CHANGED")
         found_sending = False
         for recipient in state["deliveries"].get(market_date, {}).get("recipients", {}).values():
             if recipient.get("status") == "SENDING":
                 recipient.update({"status": "UNKNOWN", "updated_at": datetime.now(timezone.utc).isoformat(), "safe_error": "RECOVERED_IN_FLIGHT_AFTER_RESTART"})
+                found_sending = True
+            elif recipient.get("status") == "UNKNOWN":
                 found_sending = True
         run_record.update({
             "status": "DELIVERY_UNKNOWN" if found_sending else "FAILED",
@@ -227,7 +233,7 @@ def _recover_interrupted_run(store: GitHubStateStore, market_date: str, started_
 
 def _parse_utc(value: Any) -> datetime | None:
     try:
-        parsed = datetime.fromisoformat(str(value))
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
         if parsed.tzinfo is None:
             return None
         return parsed.astimezone(timezone.utc)
@@ -235,10 +241,22 @@ def _parse_utc(value: Any) -> datetime | None:
         return None
 
 
-def _delivery_status(exit_code: int, market_date: str) -> str:
+def _delivery_status(exit_code: int, market_date: str, *, store: Any | None = None) -> str:
+    if type(store).__name__ == "D1StateClient":
+        try:
+            state = store.call("state.get", {"market_date": market_date})
+            rows = state.get("deliveries_by_market_date_and_status")
+            if not isinstance(rows, list):
+                return "DELIVERY_UNKNOWN"
+            if any(row.get("market_date") == market_date and row.get("status") in {"SENDING", "UNKNOWN"} and int(row.get("recipient_count", 0)) > 0 for row in rows):
+                return "DELIVERY_UNKNOWN"
+        except Exception:
+            return "DELIVERY_UNKNOWN"
     try:
         value = json.loads((OUTPUT_DIR / "daily_report_delivery.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        if type(store).__name__ == "D1StateClient":
+            return "DELIVERY_UNKNOWN"
         return "FAILED" if exit_code else "REPORT_READY"
     if value.get("report_date") != market_date:
         return "FAILED"

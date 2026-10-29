@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "node scripts/local_d1_tests.mjs",
+    "test:recovery": "node --no-warnings scripts/recovery_safety_tests.mjs",
     "check": "node node_modules/wrangler/bin/wrangler.js deploy --dry-run --outdir .wrangler/build-check"
   },
   "devDependencies": {

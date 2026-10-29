@@ -1,8 +1,16 @@
 from datetime import date, datetime, timezone
+import json
 
 import pytest
 
 from market_calendar import MarketCalendarError, get_session, is_completed_session, resolve_market_date
+
+
+@pytest.fixture(autouse=True)
+def isolate_cloud_test_configuration(monkeypatch):
+    """Git-state fixtures must not load local production credentials or backend."""
+    monkeypatch.setattr("run_daily_cloud.load_dotenv", lambda *args, **kwargs: None)
+    monkeypatch.setenv("MARKETBOT_STATE_BACKEND", "github")
 
 
 def test_weekends_regular_and_exceptional_closures_are_not_sessions():
@@ -115,7 +123,7 @@ def test_cloud_scheduled_no_new_session_is_clean_noop(state_repos, tmp_path, mon
     assert '"status": "NO_NEW_TRADING_SESSION"' in (tmp_path / "latest.json").read_text(encoding="utf-8")
 
 
-def test_crashed_inflight_cloud_send_is_recovered_as_unknown_not_retried(state_repos, tmp_path, monkeypatch):
+def test_stale_cloud_send_requires_operator_review_without_automatic_recovery(state_repos, tmp_path, monkeypatch):
     import run_daily_cloud
     from persistence.github_state import GitHubStateStore
 
@@ -138,8 +146,12 @@ def test_crashed_inflight_cloud_send_is_recovered_as_unknown_not_retried(state_r
     result = run_daily_cloud.run(["--execute", "--market-date", "2026-10-14"], now=datetime(2026, 10, 14, 21, tzinfo=timezone.utc))
     assert result == 1
     recovered = GitHubStateStore(repo).read(fetch=True)
-    assert recovered["runs"]["2026-10-14"]["status"] == "DELIVERY_UNKNOWN"
-    assert recovered["deliveries"]["2026-10-14"]["recipients"][slot]["status"] == "UNKNOWN"
+    assert recovered["runs"]["2026-10-14"]["status"] == "RUNNING"
+    assert recovered["deliveries"]["2026-10-14"]["recipients"][slot]["status"] == "SENDING"
+    manifest = json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))
+    assert manifest["reason"] == "INTERRUPTED_RUN_REQUIRES_OPERATOR_REVIEW"
+    assert manifest["stale"] is True
+    assert manifest["automatic_recovery"] is False
 
 
 def test_production_workflow_is_manual_gated_and_documents_ny_schedule():

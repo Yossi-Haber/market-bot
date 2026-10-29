@@ -131,7 +131,7 @@ def test_delivery_adapter_persists_only_hmac_recipient_identity():
 
         def call(self, op, payload, **kwargs):
             self.arguments = (op, payload)
-            return {"authorized": True}
+            return {"authorized": True, "attempt_id": payload["attempt_id"]}
 
     fake = FakeClient()
     ledger = D1DeliveryLedger(fake, "h" * 32)

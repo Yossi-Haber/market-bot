@@ -4,14 +4,24 @@ import json
 from pathlib import Path
 
 import requests
+import pytest
 
 from delivery.telegram import load_telegram_config, mask_chat_id, parse_chat_ids, resolve_chat_ids, run_delivery
+
+
+@pytest.fixture(autouse=True)
+def local_delivery_configuration(monkeypatch):
+    """These cases exercise local delivery; cloud ledger guards have separate tests."""
+    monkeypatch.setenv("MARKETBOT_STATE_BACKEND", "github")
+    monkeypatch.setenv("MARKETBOT_PERSISTENT_DELIVERY_MODE", "0")
 
 
 class FakeResponse:
     def __init__(self, status_code=200, payload=None):
         self.status_code = status_code
-        self.payload = payload or {"ok": True}
+        self.payload = payload if payload is not None else {"ok": True, "result": {"message_id": 1}}
+        if status_code >= 400:
+            self.payload = {"ok": False, "error_code": status_code, **(payload or {})}
 
     def json(self):
         return self.payload

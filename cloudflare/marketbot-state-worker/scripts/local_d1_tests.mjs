@@ -199,19 +199,20 @@ try {
     const claim = await request("run.claim", { market_date: date, run_id: runId }, { operationId: prefixId("3") });
     assert.equal(claim.status, 200);
     assert.equal(claim.data.claim_authorized, true);
+    assert.equal((await request("run.transition", { market_date: date, run_id: runId, from: "CLAIMED", to: "RUNNING" }, { operationId: prefixId("d") })).status, 200);
     const slot = "hmac256:ac00581af76fae2942fefc401985c751c927c4412b3e8486f54cda8e4d420419";
     const reviewer = "hmac256:ad4e4df2c02723b74f014769278cd2c1edac43e7f17751f1b9048f40b11aa692";
     const begin = await request("delivery.begin", { market_date: date, recipient_hmac: slot, attempt_id: prefixId("4"), reviewed_retry: false }, { operationId: prefixId("5") });
     assert.equal(begin.status, 200);
     assert.equal(begin.data.authorized, true);
-    const unknown = await request("delivery.outcome", { market_date: date, recipient_hmac: slot, status: "UNKNOWN", safe_error: "SIMULATED_RESPONSE_LOSS" }, { operationId: prefixId("6") });
+    const unknown = await request("delivery.outcome", { market_date: date, recipient_hmac: slot, attempt_id: prefixId("4"), status: "UNKNOWN", safe_error: "SIMULATED_RESPONSE_LOSS" }, { operationId: prefixId("6") });
     assert.equal(unknown.status, 200);
-    const noAutomaticRetry = await request("delivery.begin", { market_date: date, recipient_hmac: slot, attempt_id: prefixId("7"), reviewed_retry: true }, { operationId: prefixId("8") });
+    const noAutomaticRetry = await request("delivery.begin", { market_date: date, recipient_hmac: slot, attempt_id: prefixId("7"), reviewed_retry: true, sender_stopped: true }, { operationId: prefixId("8"), admin: true });
     assert.equal(noAutomaticRetry.status, 409);
     const reconciled = await request("delivery.reconcile", { market_date: date, recipient_hmac: slot, reviewer_hmac: reviewer, confirmed_sent: false }, { operationId: prefixId("9"), admin: true });
     assert.equal(reconciled.status, 200);
     assert.equal(reconciled.data.applied, true);
-    const reviewedRetry = await request("delivery.begin", { market_date: date, recipient_hmac: slot, attempt_id: prefixId("a"), reviewed_retry: true }, { operationId: prefixId("b") });
+    const reviewedRetry = await request("delivery.begin", { market_date: date, recipient_hmac: slot, attempt_id: prefixId("a"), reviewed_retry: true, sender_stopped: true }, { operationId: prefixId("b"), admin: true });
     assert.equal(reviewedRetry.status, 200);
     assert.equal(reviewedRetry.data.authorized, true);
 
@@ -336,19 +337,21 @@ try {
 
   await check("delivery claim is one-use; ambiguous outcome remains UNKNOWN until admin reconciliation", async () => {
     const slot = `hmac256:${"a".repeat(64)}`;
+    const run = (await request("state.get", { market_date: "2026-10-14" })).data.run;
+    assert.equal((await request("run.transition", { market_date: "2026-10-14", run_id: run.run_id, from: "CLAIMED", to: "RUNNING" })).status, 200);
     const first = await request("delivery.begin", { market_date: "2026-10-14", recipient_hmac: slot, attempt_id: crypto.randomBytes(16).toString("hex"), reviewed_retry: false });
     assert.equal(first.data.authorized, true);
     const replay = await request("delivery.begin", { market_date: "2026-10-14", recipient_hmac: slot, attempt_id: crypto.randomBytes(16).toString("hex"), reviewed_retry: false });
     assert.equal(replay.status, 409);
-    assert.equal((await request("delivery.outcome", { market_date: "2026-10-14", recipient_hmac: slot, status: "UNKNOWN", safe_error: "TELEGRAM_TIMEOUT" })).status, 200);
-    assert.equal((await request("delivery.begin", { market_date: "2026-10-14", recipient_hmac: slot, attempt_id: crypto.randomBytes(16).toString("hex"), reviewed_retry: true })).status, 409);
+    assert.equal((await request("delivery.outcome", { market_date: "2026-10-14", recipient_hmac: slot, attempt_id: first.data.attempt_id, status: "UNKNOWN", safe_error: "TELEGRAM_TIMEOUT" })).status, 200);
+    assert.equal((await request("delivery.begin", { market_date: "2026-10-14", recipient_hmac: slot, attempt_id: crypto.randomBytes(16).toString("hex"), reviewed_retry: true, sender_stopped: true }, { admin: true })).status, 409);
     const reviewed = await request("delivery.reconcile", { market_date: "2026-10-14", recipient_hmac: slot, reviewer_hmac: `hmac256:${"b".repeat(64)}`, confirmed_sent: false }, { admin: true });
     assert.equal(reviewed.data.applied, true);
-    const retry = await request("delivery.begin", { market_date: "2026-10-14", recipient_hmac: slot, attempt_id: crypto.randomBytes(16).toString("hex"), reviewed_retry: true });
+    const retry = await request("delivery.begin", { market_date: "2026-10-14", recipient_hmac: slot, attempt_id: crypto.randomBytes(16).toString("hex"), reviewed_retry: true, sender_stopped: true }, { admin: true });
     assert.equal(retry.data.authorized, true);
     const mixed = await request("delivery.begin", { market_date: "2026-10-14", recipient_hmac: `hmac256:${"c".repeat(64)}`, attempt_id: crypto.randomBytes(16).toString("hex"), reviewed_retry: false });
     assert.equal(mixed.data.authorized, true);
-    await request("delivery.outcome", { market_date: "2026-10-14", recipient_hmac: `hmac256:${"c".repeat(64)}`, status: "SENT" });
+    await request("delivery.outcome", { market_date: "2026-10-14", recipient_hmac: `hmac256:${"c".repeat(64)}`, attempt_id: mixed.data.attempt_id, status: "SENT" });
   });
 
   await check("schema mismatch fails closed", async () => {

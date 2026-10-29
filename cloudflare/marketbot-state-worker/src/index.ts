@@ -51,9 +51,10 @@ export async function handleRequest(request: Request, env: Env, clock: Clock = (
     return json({ error: "REQUEST_SCHEMA_INVALID" }, 400);
   }
   if (Object.keys(body).some(key => !["schema_version", "operation_id", "op", "payload"].includes(key))) return json({ error: "REQUEST_SCHEMA_INVALID" }, 400);
-  const adminOps = new Set(["ownership.set", "admin.prune", "delivery.reconcile"]);
+  const adminOps = new Set(["ownership.set", "admin.prune", "delivery.reconcile", "run.recover"]);
   try {
-    await authenticate(request, raw, body, env, clock, adminOps.has(body.op));
+    const reviewedRetry = body.op === "delivery.begin" && (body.payload as JsonObject).reviewed_retry === true;
+    await authenticate(request, raw, body, env, clock, adminOps.has(body.op) || reviewedRetry);
     await requireSchema(env.DB);
     const testMode = await resolveTestMutationMode(env);
     const payload = body.payload as JsonObject;
@@ -86,7 +87,7 @@ async function authenticate(request: Request, raw: string, body: JsonObject, env
       env.DB.prepare("INSERT INTO request_nonces(nonce, created_at) VALUES (?, ?)").bind(nonce, ts),
     ]);
   } catch { throw new ApiError(401, "AUTHENTICATION_FAILED"); }
-  if (admin && !new Set(["ownership.set", "admin.prune", "delivery.reconcile"]).has(String(body.op))) throw new ApiError(403, "ADMIN_OPERATION_NOT_ALLOWED");
+  if (admin && !new Set(["ownership.set", "admin.prune", "delivery.reconcile", "run.recover", "delivery.begin"]).has(String(body.op))) throw new ApiError(403, "ADMIN_OPERATION_NOT_ALLOWED");
 }
 
 async function requireSchema(db: D1Database): Promise<void> {
@@ -116,6 +117,9 @@ async function dispatch(db: D1Database, opId: string, op: string, payload: JsonO
 async function stateGet(db: D1Database, payload: JsonObject): Promise<DispatchResult> {
   const marketDate = payload.market_date;
   if (marketDate !== undefined && !isDate(marketDate)) throw new ApiError(400, "MARKET_DATE_INVALID");
+  const recipient = payload.recipient_hmac === undefined ? null : requireSlot(payload.recipient_hmac);
+  if (recipient && !marketDate) throw new ApiError(400, "MARKET_DATE_REQUIRED");
+  const recipientRow = recipient ? await db.prepare("SELECT status,attempt,attempt_id,last_operation_id,safe_error,reconciliation_code FROM delivery_recipient WHERE market_date=? AND recipient_hmac=?").bind(marketDate, recipient).first<JsonObject>() : null;
   const [ownership, stateMeta, runs, run, quotaBuckets, quotaSummary, deliverySummary, operationSummary, integrity] = await Promise.all([
     db.prepare("SELECT cloud_quota_exclusive, windows_sender_disabled, cloud_delivery_enabled FROM ownership WHERE singleton=1").first<JsonObject>(),
     db.prepare("SELECT generation,created_at FROM state_meta WHERE singleton=1").first<{ generation: number; created_at: string }>(),
@@ -145,6 +149,8 @@ async function stateGet(db: D1Database, payload: JsonObject): Promise<DispatchRe
     ownership: { cloud_quota_exclusive: toBool(ownership.cloud_quota_exclusive), windows_sender_disabled: toBool(ownership.windows_sender_disabled), cloud_delivery_enabled: toBool(ownership.cloud_delivery_enabled) },
     runs: runsByDate,
     ...(marketDate ? { run } : {}),
+    ...(recipient ? { delivery_recipient: recipientRow } : {}),
+    delivery_protocol_version: 2,
     quota: { buckets: quotaBuckets.results, reservations_by_utc_day: quotaSummary.results },
     deliveries_by_market_date_and_status: deliverySummary.results,
     operations_by_type_and_status: operationSummary.results,
@@ -225,14 +231,17 @@ async function runTransition(db: D1Database, opId: string, p: JsonObject, now: D
 
 async function runRecover(db: D1Database, opId: string, p: JsonObject, now: Date): Promise<DispatchResult> {
   const date = requireDate(p.market_date); const runId = requireId(p.run_id, "RUN_ID_INVALID");
-  const hash = await requestHash("run.recover", { market_date: date, run_id: runId });
+  if (p.sender_stopped !== true) throw new ApiError(409, "SENDER_STOP_CONFIRMATION_REQUIRED");
+  const hash = await requestHash("run.recover", { market_date: date, run_id: runId, sender_stopped: true });
   const replay = await priorOperation(db, opId, "run.recover", hash);
   if (replay) return { status: 200, body: { ...replay, replayed: true } };
+  const target = await db.prepare("SELECT status FROM run_claim WHERE market_date=? AND run_id=?").bind(date, runId).first<{ status: string }>();
+  if (!target || !["CLAIMED", "RUNNING"].includes(target.status)) throw new ApiError(409, "RUN_NOT_RECOVERABLE");
   const ts = now.toISOString();
   const results = await db.batch([
     operationInsert(db, opId, "run.recover", hash, now),
-    db.prepare("UPDATE delivery_recipient SET status='UNKNOWN',safe_error='RECOVERED_IN_FLIGHT_AFTER_RESTART',updated_at=?,last_operation_id=? WHERE market_date=? AND status='SENDING' AND changes()=1").bind(ts, opId, date),
-    db.prepare("UPDATE run_claim SET status=CASE WHEN EXISTS(SELECT 1 FROM delivery_recipient WHERE market_date=? AND status='UNKNOWN') THEN 'DELIVERY_UNKNOWN' ELSE 'FAILED' END,reason_code=CASE WHEN EXISTS(SELECT 1 FROM delivery_recipient WHERE market_date=? AND status='UNKNOWN') THEN 'INTERRUPTED_SEND_REQUIRES_REVIEW' ELSE 'INTERRUPTED_RUN_REQUIRES_REVIEW' END,finished_at=?,last_operation_id=? WHERE market_date=? AND run_id=? AND status='RUNNING'").bind(date, date, ts, opId, date, runId),
+    db.prepare("UPDATE run_claim SET status=CASE WHEN EXISTS(SELECT 1 FROM delivery_recipient WHERE market_date=? AND status IN ('SENDING','UNKNOWN')) THEN 'DELIVERY_UNKNOWN' ELSE 'FAILED' END,reason_code=CASE WHEN EXISTS(SELECT 1 FROM delivery_recipient WHERE market_date=? AND status IN ('SENDING','UNKNOWN')) THEN 'INTERRUPTED_SEND_REQUIRES_REVIEW' ELSE 'INTERRUPTED_RUN_REQUIRES_REVIEW' END,finished_at=?,last_operation_id=? WHERE market_date=? AND run_id=? AND status=? AND changes()=1").bind(date, date, ts, opId, date, runId, target.status),
+    db.prepare("UPDATE delivery_recipient SET status='UNKNOWN',safe_error=COALESCE(safe_error,'RECOVERED_IN_FLIGHT_AFTER_RESTART'),updated_at=?,last_operation_id=? WHERE market_date=? AND status='SENDING' AND changes()=1 AND EXISTS(SELECT 1 FROM run_claim WHERE market_date=? AND run_id=? AND last_operation_id=?)").bind(ts, opId, date, date, runId, opId),
     operationCommit(db, opId),
   ]);
   if (Number(results[0]?.meta?.changes) !== 1) return replayOrConflict(db, opId, "run.recover", hash);
@@ -245,15 +254,22 @@ async function runRecover(db: D1Database, opId: string, p: JsonObject, now: Date
 async function deliveryBegin(db: D1Database, opId: string, p: JsonObject, now: Date, testMode = false): Promise<DispatchResult> {
   const date = requireDate(p.market_date); const slot = requireSlot(p.recipient_hmac); const attemptId = requireId(p.attempt_id, "ATTEMPT_ID_INVALID");
   const reviewed = p.reviewed_retry === true;
-  const hash = await requestHash("delivery.begin", { market_date: date, recipient_hmac: slot, attempt_id: attemptId, reviewed_retry: reviewed });
+  if (reviewed && p.sender_stopped !== true) throw new ApiError(409, "SENDER_STOP_CONFIRMATION_REQUIRED");
+  const hash = await requestHash("delivery.begin", { market_date: date, recipient_hmac: slot, attempt_id: attemptId, reviewed_retry: reviewed, ...(reviewed ? { sender_stopped: true } : {}) });
   const replay = await priorOperation(db, opId, "delivery.begin", hash);
   if (replay) return { status: 200, body: { ...replay, authorized: false, replayed: true } };
   await requireOwnership(db, true, testMode);
+  const run = await db.prepare("SELECT status FROM run_claim WHERE market_date=?").bind(date).first<{ status: string }>();
+  if (!run || (reviewed ? !["RUNNING", "FAILED", "DELIVERY_UNKNOWN", "PARTIAL_DELIVERY"].includes(run.status) : run.status !== "RUNNING")) throw new ApiError(409, "DELIVERY_RUN_NOT_SENDABLE");
+  if (reviewed) {
+    const existing = await db.prepare("SELECT status FROM delivery_recipient WHERE market_date=? AND recipient_hmac=?").bind(date, slot).first<{ status: string }>();
+    if (existing?.status !== "FAILED_SAFE") throw new ApiError(409, "DELIVERY_SLOT_NOT_SENDABLE");
+  }
   const ts = now.toISOString();
   try {
     const results = await db.batch([
       operationInsert(db, opId, "delivery.begin", hash, now),
-      db.prepare("INSERT INTO delivery_recipient(market_date,recipient_hmac,status,attempt,attempt_id,last_operation_id,send_started_at,updated_at) SELECT ?,?,'SENDING',1,?,?,?,? WHERE changes()=1 ON CONFLICT(market_date,recipient_hmac) DO UPDATE SET status='SENDING',attempt=delivery_recipient.attempt+1,attempt_id=excluded.attempt_id,last_operation_id=excluded.last_operation_id,send_started_at=excluded.send_started_at,updated_at=excluded.updated_at,safe_error=NULL WHERE delivery_recipient.status='FAILED_SAFE' AND ?=1").bind(date, slot, attemptId, opId, ts, ts, reviewed ? 1 : 0),
+      db.prepare("INSERT INTO delivery_recipient(market_date,recipient_hmac,status,attempt,attempt_id,last_operation_id,send_started_at,updated_at) SELECT ?,?,'SENDING',1,?,?,?,? WHERE changes()=1 AND EXISTS(SELECT 1 FROM run_claim WHERE market_date=? AND status=?) AND EXISTS(SELECT 1 FROM ownership WHERE singleton=1 AND cloud_quota_exclusive=? AND windows_sender_disabled=? AND cloud_delivery_enabled=?) AND (?=0 OR EXISTS(SELECT 1 FROM delivery_recipient WHERE market_date=? AND recipient_hmac=? AND status='FAILED_SAFE')) ON CONFLICT(market_date,recipient_hmac) DO UPDATE SET status='SENDING',attempt=delivery_recipient.attempt+1,attempt_id=excluded.attempt_id,last_operation_id=excluded.last_operation_id,send_started_at=excluded.send_started_at,updated_at=excluded.updated_at,safe_error=NULL WHERE delivery_recipient.status='FAILED_SAFE' AND ?=1").bind(date, slot, attemptId, opId, ts, ts, date, run.status, testMode ? 0 : 1, testMode ? 0 : 1, testMode ? 0 : 1, reviewed ? 1 : 0, date, slot, reviewed ? 1 : 0),
       operationCommit(db, opId),
     ]);
     if (Number(results[0]?.meta?.changes) !== 1) return replayOrConflict(db, opId, "delivery.begin", hash);
@@ -262,21 +278,22 @@ async function deliveryBegin(db: D1Database, opId: string, p: JsonObject, now: D
     if (existing && !(reviewed && existing.status === "FAILED_SAFE")) throw new ApiError(409, "DELIVERY_SLOT_NOT_SENDABLE");
     throw new ApiError(503, "STATE_BACKEND_UNAVAILABLE");
   }
-  const row = await db.prepare("SELECT last_operation_id,attempt FROM delivery_recipient WHERE market_date=? AND recipient_hmac=?").bind(date, slot).first<{ last_operation_id: string; attempt: number }>();
+  const row = await db.prepare("SELECT last_operation_id,attempt,attempt_id FROM delivery_recipient WHERE market_date=? AND recipient_hmac=?").bind(date, slot).first<{ last_operation_id: string; attempt: number; attempt_id: string }>();
   const authorized = row?.last_operation_id === opId;
   await storeOperationResult(db, opId, { operation_id: opId, authorized, attempt: row?.attempt || 0 });
-  return { status: authorized ? 200 : 409, body: { operation_id: opId, authorized, attempt: row?.attempt || 0, replayed: false } };
+  return { status: authorized ? 200 : 409, body: { operation_id: opId, authorized, attempt: row?.attempt || 0, attempt_id: row?.attempt_id, replayed: false } };
 }
 
 async function deliveryOutcome(db: D1Database, opId: string, p: JsonObject, now: Date): Promise<DispatchResult> {
   const date = requireDate(p.market_date); const slot = requireSlot(p.recipient_hmac);
+  const attemptId = requireId(p.attempt_id, "ATTEMPT_ID_INVALID");
   const to = requireEnum(p.status, ["SENT","UNKNOWN","FAILED_SAFE"]); const code = p.safe_error === undefined ? null : requireSafeCode(p.safe_error);
-  const hash = await requestHash("delivery.outcome", { market_date: date, recipient_hmac: slot, status: to, safe_error: code });
+  const hash = await requestHash("delivery.outcome", { market_date: date, recipient_hmac: slot, attempt_id: attemptId, status: to, safe_error: code });
   const replay = await priorOperation(db, opId, "delivery.outcome", hash);
   if (replay) return { status: replay.applied ? 200 : 409, body: { ...replay, replayed: true } };
   const results = await db.batch([
     operationInsert(db, opId, "delivery.outcome", hash, now),
-    db.prepare("UPDATE delivery_recipient SET status=?,safe_error=?,updated_at=?,last_operation_id=? WHERE market_date=? AND recipient_hmac=? AND status='SENDING' AND changes()=1").bind(to, code, now.toISOString(), opId, date, slot),
+    db.prepare("UPDATE delivery_recipient SET status=?,safe_error=?,updated_at=?,last_operation_id=? WHERE market_date=? AND recipient_hmac=? AND attempt_id=? AND status='SENDING' AND changes()=1").bind(to, code, now.toISOString(), opId, date, slot, attemptId),
     operationCommit(db, opId),
   ]);
   if (Number(results[0]?.meta?.changes) !== 1) return replayOrConflict(db, opId, "delivery.outcome", hash);
@@ -409,13 +426,13 @@ function operationInsert(db: D1Database, id: string, type: string, hash: string,
 
 function validatePayloadKeys(op: string, payload: JsonObject): void {
   const allowed: Record<string, string[]> = {
-    "state.get": ["market_date"],
+    "state.get": ["market_date", "recipient_hmac"],
     "quota.reserve": ["provider", "credits"],
     "run.claim": ["market_date", "run_id"],
     "run.transition": ["market_date", "run_id", "from", "to", "reason_code"],
-    "run.recover": ["market_date", "run_id"],
-    "delivery.begin": ["market_date", "recipient_hmac", "attempt_id", "reviewed_retry"],
-    "delivery.outcome": ["market_date", "recipient_hmac", "status", "safe_error"],
+    "run.recover": ["market_date", "run_id", "sender_stopped"],
+    "delivery.begin": ["market_date", "recipient_hmac", "attempt_id", "reviewed_retry", "sender_stopped"],
+    "delivery.outcome": ["market_date", "recipient_hmac", "attempt_id", "status", "safe_error"],
     "delivery.reconcile": ["market_date", "recipient_hmac", "reviewer_hmac", "confirmed_sent"],
     "ownership.set": ["cloud_quota_exclusive", "windows_sender_disabled", "cloud_delivery_enabled"],
     "admin.prune": [],

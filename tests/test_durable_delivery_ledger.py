@@ -61,6 +61,7 @@ def test_telegram_timeout_persists_unknown_without_raw_id_in_manifest(monkeypatc
     monkeypatch.setattr("delivery.telegram.load_dotenv", lambda *args, **kwargs: None)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "synthetic-token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "synthetic-recipient-timeout")
+    monkeypatch.delenv("TELEGRAM_CHAT_IDS", raising=False)
 
     class TimeoutTransport:
         def send_photo(self, *args, **kwargs):
@@ -84,12 +85,13 @@ def test_crash_after_telegram_acceptance_never_sends_that_slot_twice(monkeypatch
     monkeypatch.setattr("delivery.telegram.load_dotenv", lambda *args, **kwargs: None)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "synthetic-token")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "synthetic-recipient-after-acceptance")
+    monkeypatch.delenv("TELEGRAM_CHAT_IDS", raising=False)
 
     class AcceptedResponse:
         status_code = 200
 
         def json(self):
-            return {"ok": True}
+            return {"ok": True, "result": {"message_id": 1}}
 
     class CountingTransport:
         calls = 0
