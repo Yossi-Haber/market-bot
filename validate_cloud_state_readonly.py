@@ -95,6 +95,8 @@ def validate_state_payload(
     """
     if state.get("schema_version") != 1:
         raise ValueError("CLOUD_STATE_SCHEMA_INVALID")
+    if type(state.get("delivery_protocol_version")) is not int or state.get("delivery_protocol_version") != 2:
+        raise ValueError("CLOUD_STATE_DELIVERY_PROTOCOL_INVALID")
     ownership = state.get("ownership")
     if not isinstance(ownership, dict) or set(ownership) != set(OWNERSHIP_FIELDS):
         raise ValueError("CLOUD_STATE_OWNERSHIP_INVALID")
@@ -183,6 +185,7 @@ def validate_state_payload(
 
     return {
         "schema_version": 1,
+        "delivery_protocol_version": 2,
         "ownership": dict(ownership),
         "ownership_matches_expected": True,
         "run_count": len(runs),
@@ -268,6 +271,7 @@ def main() -> int:
         print("CLOUD_STATE_READONLY=PASS")
         print(f"HTTP_STATUSES={','.join(map(str, session.statuses))}")
         print(f"SCHEMA_VERSION={final['schema_version']}")
+        print(f"DELIVERY_PROTOCOL_VERSION={final['delivery_protocol_version']}")
         print(f"OWNERSHIP_FLAGS={','.join('1' if expected[field] else '0' for field in OWNERSHIP_FIELDS)}")
         print(f"RUN_COUNT={final['run_count']}")
         print(f"MARKET_DATE_RUN_STATUS={json.dumps(final['run_statuses'], sort_keys=True)}")

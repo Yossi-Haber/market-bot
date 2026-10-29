@@ -14,6 +14,7 @@ _ZERO_INTEGRITY = dict.fromkeys(readonly.INTEGRITY_FIELDS, 0)
 def _state(**overrides):
     state = {
         "schema_version": 1,
+        "delivery_protocol_version": 2,
         "created_at": "2026-01-01T00:00:00.000Z",
         "ownership": {
             "cloud_quota_exclusive": False,
@@ -104,6 +105,18 @@ def test_readonly_validator_rejects_missing_extended_state_and_malformed_counts(
     state = _state(integrity={**_ZERO_INTEGRITY, "deliveries_without_run": None})
     with pytest.raises(ValueError, match="CLOUD_STATE_INTEGRITY_SUMMARY_INVALID"):
         readonly.validate_state_payload(state)
+
+
+@pytest.mark.parametrize("protocol", [1, 3, "2", None])
+def test_readonly_validator_rejects_non_protocol_two(protocol):
+    with pytest.raises(ValueError, match="CLOUD_STATE_DELIVERY_PROTOCOL_INVALID"):
+        readonly.validate_state_payload(_state(delivery_protocol_version=protocol))
+
+
+def test_readonly_summary_exposes_protocol_two():
+    result = readonly.validate_state_payload(_state())
+    assert result["schema_version"] == 1
+    assert result["delivery_protocol_version"] == 2
 
 
 @pytest.mark.parametrize("value", ["1,1", "1,2,0", "true,false,false", "1,0,0,0"])
