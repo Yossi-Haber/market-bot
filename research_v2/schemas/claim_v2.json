@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "claim_id": {
+      "type": "string"
+    },
+    "event_id": {
+      "type": "string"
+    },
+    "claim_type": {
+      "enum": [
+        "EVENT_FACT",
+        "NUMERIC_FACT",
+        "INTERPRETATION",
+        "CAUSAL_ATTRIBUTION"
+      ]
+    },
+    "subject": {
+      "type": "string"
+    },
+    "predicate": {
+      "type": "string"
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "evidence_id": {
+            "type": "string"
+          },
+          "quote": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "quote"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "event_time": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "metric": {
+      "type": "string"
+    },
+    "value": {
+      "type": "string"
+    },
+    "unit": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "claim_id",
+    "event_id",
+    "claim_type",
+    "subject",
+    "predicate",
+    "entities",
+    "citations",
+    "event_time",
+    "metric",
+    "value",
+    "unit"
+  ],
+  "additionalProperties": false
+}

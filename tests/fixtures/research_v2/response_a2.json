@@ -1,0 +1,86 @@
+{
+  "research_version": 2,
+  "proposal_only": true,
+  "events": [
+    {
+      "event_id": "e1",
+      "scope": "company",
+      "event_type": "EARNINGS_RESULTS",
+      "securities": [
+        "ORCL"
+      ],
+      "sectors": [],
+      "factual_summary": "Unapproved paraphrase",
+      "evidence_refs": [
+        "ev_8269ac0c410a1754e8eddc2b2b3670fa9805a7b3765f6dd1cc2bce51c476c0ad"
+      ],
+      "supporting_quotations": [
+        {
+          "evidence_id": "ev_8269ac0c410a1754e8eddc2b2b3670fa9805a7b3765f6dd1cc2bce51c476c0ad",
+          "quote": "ORCL reported earnings and revenue growth of 8%."
+        }
+      ],
+      "event_verification": "PRIMARY_CONFIRMED",
+      "unresolved_questions": []
+    }
+  ],
+  "claims": [
+    {
+      "claim_id": "c1",
+      "event_id": "e1",
+      "claim_type": "EVENT_FACT",
+      "subject": "ORCL",
+      "predicate": "ORCL reported earnings and revenue growth of 8%.",
+      "entities": [
+        "ORCL"
+      ],
+      "citations": [
+        {
+          "evidence_id": "ev_8269ac0c410a1754e8eddc2b2b3670fa9805a7b3765f6dd1cc2bce51c476c0ad",
+          "quote": "ORCL reported earnings and revenue growth of 8%."
+        }
+      ],
+      "event_time": null,
+      "metric": "",
+      "value": "",
+      "unit": ""
+    },
+    {
+      "claim_id": "invented-number",
+      "event_id": "e1",
+      "claim_type": "EVENT_FACT",
+      "subject": "ORCL",
+      "predicate": "ORCL reported earnings and revenue growth of 9%.",
+      "entities": [
+        "ORCL"
+      ],
+      "citations": [
+        {
+          "evidence_id": "ev_8269ac0c410a1754e8eddc2b2b3670fa9805a7b3765f6dd1cc2bce51c476c0ad",
+          "quote": "ORCL reported earnings and revenue growth of 8%."
+        }
+      ],
+      "event_time": null,
+      "metric": "",
+      "value": "",
+      "unit": ""
+    }
+  ],
+  "movement_assessments": [
+    {
+      "subject": "ORCL",
+      "linked_event_ids": [
+        "e1"
+      ],
+      "attribution": "SUPPORTED_CATALYST",
+      "rationale": "Unapproved cause",
+      "alternative_interpretations": [
+        "Other events may matter"
+      ],
+      "evidence_refs": [
+        "ev_8269ac0c410a1754e8eddc2b2b3670fa9805a7b3765f6dd1cc2bce51c476c0ad"
+      ],
+      "abstention_reason": ""
+    }
+  ]
+}

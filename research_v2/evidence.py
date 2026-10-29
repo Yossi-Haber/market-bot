@@ -78,6 +78,7 @@ def recorded_items(provider, payload):
             "source_category": row.get("source_category", "FILING" if (row.get("filing_type") or row.get("filing_form")) else "NEWS"),
             "provider_limitations": row.get("provider_limitations", []) + (["V1_FILING_DATE_PLACEHOLDER_NOT_ACCEPTANCE_TIMESTAMP"] if row.get("filing_form") and str(published).endswith("T00:00:00+00:00") else []),
             "filing_metadata": {k: row[k] for k in ("filing_type", "filing_form", "filing_items", "sec_items", "exhibit_titles", "exhibit_text", "filing_excerpts") if k in row},
+            **({"source_provenance": row["source_provenance"]} if "source_provenance" in row else {}),
         }
 
 

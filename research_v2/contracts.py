@@ -22,6 +22,9 @@ EVIDENCE_SCHEMA = obj({k: TEXT for k in ("evidence_id", "source_provider", "publ
     "content_completeness": {"enum": ["FULL_TEXT", "EXCERPT", "TITLE_ONLY"]},
     "temporal_tag": {"enum": ["PREVIOUS_AFTER_HOURS", "PRE_MARKET", "REGULAR_SESSION", "POST_CLOSE", "TIME_UNCERTAIN"]},
     "provider_limitations": STRINGS, "filing_metadata": MAPPING})
+EVIDENCE_SCHEMA["properties"]["source_provenance"] = obj({
+    "kind": {"enum": ["PRIMARY", "INDEPENDENT", "SYNDICATED", "AGGREGATOR", "UNKNOWN"]},
+    "origin_publisher": TEXT, "origin_url": TEXT, "issuer_symbols": STRINGS})
 PACKET_SCHEMA = obj({"packet_version": {"const": 2}, "market_date": TEXT,
                      "session": obj({k: TEXT for k in ("timezone", "regular_open_utc", "regular_close_utc", "previous_session_close_utc")}),
                      "market_context": MAPPING, "movers": array(MAPPING), "peer_groups": array(MAPPING),
@@ -37,6 +40,12 @@ ASSESSMENT_SCHEMA = obj({"subject": TEXT, "linked_event_ids": STRINGS,
                          "attribution": {"enum": ["SUPPORTED_CATALYST", "PLAUSIBLE_CATALYST", "SECTOR_CO_MOVEMENT", "UNEXPLAINED"]},
                          "rationale": TEXT, "alternative_interpretations": STRINGS, "evidence_refs": STRINGS, "abstention_reason": TEXT})
 RESEARCH_SCHEMA = obj({"research_version": {"const": 2}, "proposal_only": {"const": True}, "events": array(EVENT_SCHEMA), "movement_assessments": array(ASSESSMENT_SCHEMA)})
+CLAIM_SCHEMA = obj({"claim_id": TEXT, "event_id": TEXT,
+    "claim_type": {"enum": ["EVENT_FACT", "NUMERIC_FACT", "INTERPRETATION", "CAUSAL_ATTRIBUTION"]},
+    "subject": TEXT, "predicate": TEXT, "entities": STRINGS, "citations": array(QUOTE_SCHEMA),
+    "event_time": NULL_TEXT, "metric": TEXT, "value": TEXT, "unit": TEXT})
+# Archived A1 outputs remain valid, but cannot promote opaque summaries as claims.
+RESEARCH_SCHEMA["properties"]["claims"] = array(CLAIM_SCHEMA)
 
 
 def validate(value, schema, path="root"):
@@ -54,7 +63,8 @@ def validate(value, schema, path="root"):
         if not set(schema["required"]) <= value.keys() or (schema.get("additionalProperties") is False and value.keys() - schema["properties"].keys()):
             raise ValueError(f"SCHEMA_FIELDS:{path}")
         for key, child in schema["properties"].items():
-            validate(value[key], child, f"{path}.{key}")
+            if key in value:
+                validate(value[key], child, f"{path}.{key}")
     if isinstance(value, list) and "items" in schema:
         for i, child in enumerate(value):
             validate(child, schema["items"], f"{path}[{i}]")

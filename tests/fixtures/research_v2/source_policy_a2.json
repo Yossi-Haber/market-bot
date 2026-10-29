@@ -1,0 +1,10 @@
+{
+  "primary_sources": {
+    "issuer.example": {
+      "publisher": "Synthetic Issuer",
+      "subjects": [
+        "ORCL"
+      ]
+    }
+  }
+}

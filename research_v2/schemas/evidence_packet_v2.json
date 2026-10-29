@@ -127,6 +127,39 @@
           },
           "filing_metadata": {
             "type": "object"
+          },
+          "source_provenance": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "PRIMARY",
+                  "INDEPENDENT",
+                  "SYNDICATED",
+                  "AGGREGATOR",
+                  "UNKNOWN"
+                ]
+              },
+              "origin_publisher": {
+                "type": "string"
+              },
+              "origin_url": {
+                "type": "string"
+              },
+              "issuer_symbols": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "kind",
+              "origin_publisher",
+              "origin_url",
+              "issuer_symbols"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [

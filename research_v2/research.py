@@ -18,6 +18,12 @@ POST_CLOSE evidence cannot explain the completed regular session. Disclose missi
 content and coverage limitations. Abstain when evidence is insufficient. Do not
 invent financial numbers or confidence probabilities. All classifications are
 proposals requiring a later deterministic evidence gate, never publication approval."""
+INSTRUCTIONS += """ Include typed claims for every event fact: claim_id, event_id,
+claim_type (EVENT_FACT, NUMERIC_FACT, INTERPRETATION or CAUSAL_ATTRIBUTION), subject,
+predicate, entities, citations (evidence_id and quote), event_time (null if unknown),
+metric, value and unit (empty when inapplicable). Use literal source wording for
+predicates. Never infer event time from publication time or move attribution from
+an event label. Opaque summaries and rationales require separate semantic review."""
 
 
 @dataclass(frozen=True)

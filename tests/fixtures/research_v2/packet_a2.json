@@ -1,0 +1,59 @@
+{
+  "packet_version": 2,
+  "market_date": "2026-10-28",
+  "session": {
+    "timezone": "America/New_York",
+    "regular_open_utc": "2026-10-28T13:30:00+00:00",
+    "regular_close_utc": "2026-10-28T20:00:00+00:00",
+    "previous_session_close_utc": "2026-10-27T20:00:00+00:00"
+  },
+  "market_context": {},
+  "movers": [],
+  "peer_groups": [],
+  "evidence": [
+    {
+      "title": "Synthetic results",
+      "original_url": "https://issuer.example/release",
+      "publisher": "Synthetic Issuer",
+      "published_at": "2026-10-28T15:00:00Z",
+      "publication_timestamp_original": "2026-10-28T15:00:00Z",
+      "publication_precision": "TIMESTAMP",
+      "retrieved_at": null,
+      "symbols": [],
+      "source_text": "ORCL reported earnings and revenue growth of 8%.",
+      "content_completeness": "FULL_TEXT",
+      "source_category": "NEWS",
+      "provider_limitations": [],
+      "filing_metadata": {},
+      "source_provenance": {
+        "kind": "PRIMARY",
+        "origin_publisher": "Synthetic Issuer",
+        "origin_url": "https://issuer.example/release",
+        "issuer_symbols": [
+          "ORCL"
+        ]
+      },
+      "source_provider": "synthetic",
+      "acquisition_method": "RECORDED_PROVIDER_RESPONSE",
+      "normalized_url": "https://issuer.example/release",
+      "temporal_tag": "REGULAR_SESSION",
+      "evidence_id": "ev_8269ac0c410a1754e8eddc2b2b3670fa9805a7b3765f6dd1cc2bce51c476c0ad"
+    }
+  ],
+  "coverage": [
+    {
+      "provider": "synthetic",
+      "state": "AVAILABLE",
+      "limitations": [],
+      "accepted": 1,
+      "excluded": 0,
+      "budget_excluded": 0,
+      "incomplete": 0
+    }
+  ],
+  "diagnostics": {
+    "hygiene_rejections": {},
+    "live_requests": 0,
+    "origin": "SYNTHETIC_A2_NOT_PRODUCTION"
+  }
+}
