@@ -4,6 +4,7 @@ Only metadata is retained.  Article bodies and raw HTML never leave this module.
 """
 
 from __future__ import annotations
+from news.evidence_capture import observe, active as capture_active, page_excerpt
 
 import hashlib
 import json
@@ -229,6 +230,7 @@ class LiveEvidenceAcquirer:
         try:
             payload = json.loads(self._cache_path(candidate, source).read_text(encoding="utf-8"))
             if isinstance(payload, list):
+                observe("verification", payload, scope="OFFICIAL_OR_TIER2_CACHE", limitations=["CACHED_METADATA_MAY_NOT_HAVE_ORIGINAL_BODIES"])
                 self.cache_hits += 1
                 return payload
             return None
@@ -236,6 +238,7 @@ class LiveEvidenceAcquirer:
             return None
 
     def _save_cache(self, candidate: dict[str, Any], source: str, evidence: list[dict[str, Any]]) -> None:
+        observe("verification", evidence, scope="OFFICIAL_OR_TIER2")
         path = self._cache_path(candidate, source)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -260,6 +263,10 @@ class LiveEvidenceAcquirer:
                     continue
                 title, published = _metadata_from_html(response.text[:2_000_000], url, str(candidate.get("title") or ""), candidate.get("published_at"))
                 item = {"source_type": "OFFICIAL", "source_domain": _domain(url), "source_name": "Company IR", "title": title, "published_at": published, "affected_symbols": [symbol], "source_url": url}
+                if capture_active():
+                    original_title, original_date, original_stamp, original_text = page_excerpt(response.text)
+                    observe("official_page", [{**item, "title": original_title, "published_at": original_date, "publication_timestamp_original": original_stamp, "text": original_text,
+                        "provider_limitations": ["HTML_TEXT_EXCERPT_PUBLICATION_MUST_BE_FROM_PAGE"]}], scope="COMPANY_IR")
                 self._save_cache(candidate, source, [item])
                 results.append(item)
                 break
@@ -307,6 +314,10 @@ class LiveEvidenceAcquirer:
                 continue
             title, published = _metadata_from_html(response.text[:2_000_000], url, str(candidate.get("title") or ""), candidate.get("published_at"))
             item = {"source_type": "OFFICIAL", "source_domain": _domain(url), "source_name": f"{actor} Official", "title": title, "published_at": published, "affected_symbols": candidate.get("affected_symbols", []), "source_url": url, "regulator": actor}
+            if capture_active():
+                original_title, original_date, original_stamp, original_text = page_excerpt(response.text)
+                observe("official_page", [{**item, "title": original_title, "published_at": original_date, "publication_timestamp_original": original_stamp, "text": original_text,
+                    "provider_limitations": ["HTML_TEXT_EXCERPT_PUBLICATION_MUST_BE_FROM_PAGE"]}], scope="REGULATOR")
             self._save_cache(candidate, source, [item])
             results.append(item)
         return results

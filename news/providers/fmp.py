@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 import requests
 
 from news.schema import NewsCandidate
+from news.evidence_capture import observe, active as capture_active
 
 BASE_URL = "https://financialmodelingprep.com/api/v3"
 NEWS_URL = f"{BASE_URL}/stock_news"
@@ -98,6 +99,10 @@ class FMPProvider:
                     self._mark_plan_restriction()
                 raise ValueError("invalid_provider_payload")
             self.status = "OK"
+            if capture_active():
+                observe("fmp", [{**row, "published_at": row.get("publishedDate") or row.get("published_at") or row.get("date"),
+                    "source": row.get("site") or row.get("source", ""), "text": row.get("text") or row.get("content") or row.get("summary") or ""}
+                    for row in payload if isinstance(row, dict)], scope=request_type)
             return payload
         except (requests.RequestException, OSError, ValueError, TypeError):
             self.errors += 1

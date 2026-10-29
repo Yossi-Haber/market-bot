@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from news.schema import NewsCandidate
+from news.evidence_capture import observe
 from news.performance import NewsBudgetExhausted, ProviderCircuitOpen
 from cache_config import cache_path
 
@@ -82,11 +83,14 @@ class MarketauxDiscovery:
 
     def search(self, query: str = "", query_type: str = "GENERAL", symbols: list[str] | None = None) -> list[NewsCandidate]:
         if not self.enabled:
+            observe("marketaux", [], scope=query_type, symbols=symbols or (), state="UNAVAILABLE", limitations=["DISABLED_OR_UNCONFIGURED"])
             return []
         if query_type == "TARGETED_MOVER":
             if self.targeted_requests_attempted >= self.targeted_max_requests:
+                observe("marketaux", [], scope=query_type, symbols=symbols or (), state="BUDGET_NOT_COLLECTED")
                 return []
         elif self.request_count >= self.max_requests:
+            observe("marketaux", [], scope=query_type, symbols=symbols or (), state="BUDGET_NOT_COLLECTED")
             return []
         symbol_text = ",".join(symbols or [])
         targeted_symbol = str((symbols or [""])[0]).upper() if query_type == "TARGETED_MOVER" else ""
@@ -94,6 +98,7 @@ class MarketauxDiscovery:
         cache_path = CACHE_DIR / self.market_date.isoformat() / f"{query_type.lower()}_{digest}.json"
         query_stats = {"query_type": query_type, "raw_candidates": 0, "in_window": 0, "quality_pass": 0, "non_news_filtered": 0, "forecast_filtered": 0, "final_candidates": 0, "entity_matches": 0, "entity_missing": 0, "found": 0, "returned": 0, "status": None, "target_symbol": targeted_symbol}
         if not self.available_for_run and (self.refresh_cache or not cache_path.exists()):
+            observe("marketaux", [], scope=query_type, symbols=symbols or (), state="QUOTA_EXHAUSTED")
             self.requests_skipped_usage_limit += 1
             query_stats.update({"error_code": "MARKETAUX_USAGE_LIMIT_REACHED", "error_message": "request_skipped_usage_limit"})
             self.query_diagnostics.append(query_stats)
@@ -136,6 +141,7 @@ class MarketauxDiscovery:
                     query_stats["returned"] = meta.get("returned", 0)
                 error = payload.get("error") if isinstance(payload, dict) else None
                 if isinstance(error, dict):
+                    observe("marketaux", [], scope=query_type, symbols=symbols or (), state="QUOTA_EXHAUSTED" if error.get("code") == "usage_limit_reached" else "UNAVAILABLE")
                     self.requests_failed += 1
                     query_stats.update({"error_code": str(error.get("code") or "MARKETAUX_API_ERROR")[:100], "error_message": _sanitize_provider_error_message(error.get("message"), self.token)})
                     if query_stats["error_code"] == "usage_limit_reached":
@@ -149,6 +155,7 @@ class MarketauxDiscovery:
         except requests.HTTPError as exc:
             self.requests_failed += 1
             status, code, message = _safe_provider_error(exc, sensitive_value=self.token)
+            observe("marketaux", [], scope=query_type, symbols=symbols or (), state="QUOTA_EXHAUSTED" if status == 402 or code == "usage_limit_reached" else "UNAVAILABLE")
             query_stats.update({"status": status, "error_code": code, "error_message": message})
             if status == 402 or code == "usage_limit_reached":
                 self._mark_usage_limit_reached()
@@ -156,12 +163,14 @@ class MarketauxDiscovery:
             self.logger.warning("Marketaux query failed: query_type=%s status=%s error_code=%s message=%s", query_type, status, code, message)
             return []
         except requests.Timeout:
+            observe("marketaux", [], scope=query_type, symbols=symbols or (), state="UNAVAILABLE", limitations=["PROVIDER_TIMEOUT"])
             self.requests_failed += 1
             query_stats.update({"status": query_stats.get("status"), "error_code": "MARKETAUX_TIMEOUT", "error_message": "request_timeout", "timeout_seconds": round(time_module.monotonic() - request_started, 3) if "request_started" in locals() else 0.0})
             self.query_diagnostics.append(query_stats)
             self.logger.warning("Marketaux query failed: query_type=%s error_code=MARKETAUX_TIMEOUT", query_type)
             return []
         except (requests.RequestException, OSError, ValueError) as exc:
+            observe("marketaux", [], scope=query_type, symbols=symbols or (), state="UNAVAILABLE", limitations=["PROVIDER_REQUEST_OR_BUDGET_FAILURE"])
             # The guarded transport can reject a call before any HTTP request.
             # Such calls belong in diagnostics, but not provider usage totals.
             blocked_before_http = isinstance(exc, (ProviderCircuitOpen, NewsBudgetExhausted))
@@ -180,6 +189,7 @@ class MarketauxDiscovery:
             self.query_diagnostics.append(query_stats)
             self.logger.warning("Marketaux query failed: query_type=%s status=network error_code=%s message=request_failed", query_type, type(exc).__name__)
             return []
+        observe("marketaux", payload, scope=query_type, symbols=symbols or ())
         results: list[NewsCandidate] = []
         for item in payload.get("data", []) if isinstance(payload, dict) else []:
             if not isinstance(item, dict) or not item.get("title"):

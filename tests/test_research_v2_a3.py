@@ -168,7 +168,7 @@ def test_no_llm_mode_generates_seven_artifacts_without_credentials(tmp_path,monk
     root=tmp_path/'out'
     result=generate_package(mode='real-evidence',output=root,archive=archive(tmp_path),market_date='2026-10-28')
     assert result['status']=='NOT_REQUESTED' and result['usage']['api_calls']==0
-    assert len(list(root.iterdir()))==7
+    assert len(list(root.iterdir()))==8
     md=(root/'v2_research_review.md').read_text(encoding='utf-8')
     assert 'NOT_ASSESSED' in md and 'Evidence coverage and missing bodies' in md and 'Human review requirements' in md
     assert 'ACQUISITION_GAP_NOT_NO_CATALYST' in md
@@ -226,6 +226,8 @@ def test_complete_real_mode_package_with_mocked_official_transport(tmp_path,monk
     import research_v2.session as module
     monkeypatch.setenv('OPENAI_API_KEY','SYNTHETIC_UNIT_KEY')
     monkeypatch.setattr(module,'OpenAIResearchProvider',lambda **kwargs:provider)
+    # Synthetic HTTP test exercises transport/package integration, never genuine readiness.
+    monkeypatch.setattr(module,'assess_readiness',lambda *a,**kw:{'status':'READY_FOR_LLM_RESEARCH','synthetic_unit_override':True})
     root=tmp_path/'out'
     result=generate_package(mode='real-llm',output=root,archive=archive(tmp_path),market_date='2026-10-28',recordings=saved,
         source_policy=policy,model='configured-model',pricing=provider.pricing,authorized=True,max_spend_usd='1',max_input_tokens=100000)

@@ -15,6 +15,7 @@ from pathlib import Path
 
 from cache_config import cache_path
 from news.schema import NewsCandidate
+from news.evidence_capture import observe, active as capture_active
 from news.event_language import asserted_event_type, is_future_preview
 
 API_URL = "https://finnhub.io/api/v1/company-news"
@@ -475,10 +476,14 @@ class FinnhubProvider:
         symbol = symbol.upper()
         cached = self._load_cache(symbol, start_date, end_date)
         if cached is not None:
+            if capture_active():
+                observe("finnhub", [{**c.as_dict(), **(c.raw_metadata if isinstance(c.raw_metadata, dict) else {}), "affected_symbols": c.affected_symbols,
+                    "publication_timestamp_original": str((c.raw_metadata if isinstance(c.raw_metadata, dict) else {}).get("datetime", c.published_at))} for c in cached], scope="COMPANY_CACHE", symbols=[symbol], limitations=["CACHE_ORIGINAL_RETRIEVAL_TIME_MAY_BE_UNAVAILABLE"])
             self.last_normalized_count = len(cached)
             self.status = "CACHE_HIT"
             return cached
         if not self.enabled:
+            observe("finnhub", [], scope="COMPANY", symbols=[symbol], state="UNAVAILABLE", limitations=["DISABLED_OR_UNCONFIGURED"])
             self.status = "DISABLED_NOT_CONFIGURED"
             return []
         self.live_requests += 1
@@ -489,9 +494,11 @@ class FinnhubProvider:
             response.raise_for_status()
             payload = response.json()
         except (requests.RequestException, OSError, ValueError):
+            observe("finnhub", [], scope="COMPANY", symbols=[symbol], state="UNAVAILABLE")
             self.status = "REQUEST_FAILED"
             self.last_error = "REQUEST_FAILED"
             return []
+        observe("finnhub", payload, scope="COMPANY", symbols=[symbol])
         self.status = "OK"
         self.last_error = None
         self.last_raw_count = len(payload) if isinstance(payload, list) else 0

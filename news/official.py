@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 import requests
 
 from news.schema import NewsCandidate
+from news.evidence_capture import observe, active as capture_active, publication_iso
 from cache_config import cache_path
 from news.sources import SecSource
 
@@ -54,6 +55,14 @@ def _rss_candidates(xml_text: str, source_name: str, domain: str, url: str, cate
             value = node.findtext(name) or node.findtext(f"{{http://www.w3.org/2005/Atom}}{name}") or ""
             return " ".join(value.split())
         title, published, link = text("title"), text("pubDate") or text("published") or text("updated"), text("link") or url
+        if capture_active():
+            original_date = publication_iso(published)
+            atom_link = node.find("{http://www.w3.org/2005/Atom}link")
+            original_link = atom_link.get("href", link) if atom_link is not None else link
+            observe("official_rss", [{"title": title, "source": source_name, "url": original_link,
+                "published_at": original_date, "publication_timestamp_original": published,
+                "text": node.findtext("description") or node.findtext("{http://www.w3.org/2005/Atom}summary") or "",
+                "provider_limitations": ["RSS_EXCERPT_NOT_FULL_ARTICLE"]}], scope="MACRO_OFFICIAL")
         if not title:
             continue
         parsed = _parse_date(published)
@@ -140,6 +149,7 @@ class OfficialNewsCollector:
         for key, (name, domain, url) in OFFICIAL_FEEDS.items():
             payload = self._load_or_fetch(key, url)
             if payload is None:
+                observe("official_rss", [], scope=key, state="UNAVAILABLE")
                 continue
             category = "CENTRAL_BANK" if key == "fed" else "MACRO_RELEASE"
             candidates.extend(_rss_candidates(payload, name, domain, url, category, self.market_date))

@@ -48,7 +48,7 @@ def normalized_url(value):
     if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username or parts.password:
         raise ValueError("INVALID_SOURCE_URL")
     query = [(k, v) for k, v in parse_qsl(parts.query) if not k.lower().startswith("utm_")]
-    if any(k.lower() in {"token", "api_key", "apikey", "key"} for k, _ in query):
+    if any(k.lower() in {"token", "api_token", "access_token", "api_key", "apikey", "key"} for k, _ in query):
         raise ValueError("CREDENTIAL_URL_REJECTED")
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, urlencode(sorted(query)), ""))
 
@@ -69,7 +69,7 @@ def recorded_items(provider, payload):
             "original_url": row.get("source_url", row.get("url", "")),
             "publisher": row.get("source_name", row.get("source", row.get("source_domain", ""))),
             "published_at": published,
-            "publication_timestamp_original": str(row.get("published_at", row.get("datetime", ""))),
+            "publication_timestamp_original": str(row.get("publication_timestamp_original", row.get("published_at", row.get("datetime", "")))),
             "publication_precision": "DATE_ONLY" if row.get("filing_form") and str(published).endswith("T00:00:00+00:00") else "TIMESTAMP",
             "retrieved_at": row.get("retrieved_at"),
             "symbols": row.get("affected_symbols", [e["symbol"] for e in row.get("entities", []) if e.get("symbol")]),
@@ -99,7 +99,7 @@ def build_packet(market_date, recordings, *, market_context=None, movers=None, p
         counts = {"accepted": 0, "excluded": 0, "budget_excluded": 0, "incomplete": 0}
         for item in recorded_items(recording["provider"], recording.get("payload", [])):
             try:
-                if not item["title"].strip() or not item["publisher"].strip():
+                if not isinstance(item["title"], str) or not isinstance(item["publisher"], str) or not item["title"].strip() or not item["publisher"].strip():
                     raise ValueError("SOURCE_IDENTITY_MISSING")
                 url = normalized_url(item["original_url"])
                 tag = temporal_tag(item["published_at"], session)

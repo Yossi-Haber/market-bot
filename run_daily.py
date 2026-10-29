@@ -41,6 +41,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--refresh-market", action="store_true", help="Force fresh market and macro collection.")
     parser.add_argument("--refresh-marketaux", action="store_true", help="Bypass the Marketaux cache for this run.")
     parser.add_argument("--refresh-verification", action="store_true", help="Bypass the Verification V2 cache for this run.")
+    parser.add_argument("--v2-evidence-output", help="Opt-in evidence capture directory; report-only mode and disabled LLM required.")
     return parser.parse_args(argv)
 
 
@@ -266,7 +267,11 @@ def run(argv: list[str] | None = None) -> int:
     logger.info("Daily production run started")
     requested_date = args.market_date
     stage = "PREFLIGHT"
+    evidence_capture = None
     try:
+        capture_output = getattr(args, "v2_evidence_output", None) or os.getenv("MARKETBOT_V2_EVIDENCE_OUTPUT")
+        if capture_output and (not (args.dry_run or args.skip_telegram) or load_llm_settings()["enable_llm"]):
+            raise PreflightFailure("V2_CAPTURE_REQUIRES_REPORT_ONLY_AND_LLM_DISABLED")
         run_preflight(args, logger)
         stage = "MARKET_DATA"
         collection_code = _step(logger, 1, "Market data", lambda: collect_market_data(market_date_override=requested_date, refresh_movers=args.refresh_movers, refresh_market=args.refresh_market, movers_prefilter_enabled=not args.disable_movers_prefilter))
@@ -276,6 +281,11 @@ def run(argv: list[str] | None = None) -> int:
         if requested_date and requested_date != _market_date():
             raise RuntimeError("MARKET_DATE_MISMATCH")
         market_date_resolution = {"source": "EXPLICIT", "agreement": "explicit"} if requested_date else _market_date_resolution()
+        if capture_output:
+            from research_v2.capture import EvidenceCapture
+            evidence_capture = EvidenceCapture(market_date, capture_output)
+            evidence_capture.manifest["capture"]["report_pipeline_completed"] = False
+            evidence_capture.__enter__()
         logger.info("Canonical market date resolved: %s", market_date)
         logger.info("Resolution source: %s", market_date_resolution.get("source"))
         logger.info("Core agreement: %s", market_date_resolution.get("agreement"))
@@ -348,6 +358,8 @@ def run(argv: list[str] | None = None) -> int:
         cache_summary = _cache_summary()
         payload = {"status": "SUCCESS", "market_date": market_date, "market_date_resolution": market_date_resolution, "visual_version": "V3", "telegram_sent": sent, "telegram_status": telegram_status, "cache": cache_summary, "runtime_seconds": round(time.monotonic() - started, 3)}
         write_status(payload)
+        if evidence_capture is not None:
+            evidence_capture.manifest["capture"]["report_pipeline_completed"] = True
         logger.info("Daily run summary: market_date=%s narrative_source=%s verified_stories=%d visual=PASS telegram=%s movers_prefilter=%s discovery=%s/120 candidate_pool=%s twelve_data_symbols=%s fallback=%s runtime=%.3fs", market_date, gate["selection"].get("selected_source"), len(gate["report"].get("top_stories", [])), telegram_status, cache_summary["movers_prefilter_mode"], cache_summary["movers_discovery_coverage"], cache_summary["movers_candidate_pool_size"], cache_summary["movers_twelve_data_symbols_requested"], cache_summary["movers_prefilter_fallback_used"], time.monotonic() - started)
         print(f"Market date: {market_date}")
         print(f"Narrative source: {gate['selection'].get('selected_source')}")
@@ -403,6 +415,13 @@ def run(argv: list[str] | None = None) -> int:
         logger.exception("Daily run failed at %s", stage)
         print(f"DAILY RUN FAILED — stage={stage} error={type(exc).__name__}")
         return 1
+    finally:
+        if evidence_capture is not None:
+            try:
+                evidence_capture.__exit__(None, None, None)
+                evidence_capture.finish(OUTPUT_DIR / "daily_report_data.json")
+            except Exception as exc:
+                logger.warning("V2_CAPTURE_FINALIZATION_FAILED error_class=%s", type(exc).__name__)
 
 
 class DeliveryFailure(RuntimeError):

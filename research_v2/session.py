@@ -13,6 +13,7 @@ from .contracts import RESEARCH_SCHEMA, validate_packet
 from .openai_provider import OpenAIResearchProvider, Pricing, input_token_bound
 from .research import FakeProvider, INSTRUCTIONS, ResearchRunner
 from .validation import validate_ledger
+from .readiness import assess_readiness
 
 MODES = ("offline", "real-evidence", "real-llm")
 
@@ -79,9 +80,11 @@ def generate_package(*, mode, output, market_date=None, archive=None, recordings
             packet = load_archive(archive, market_date, recordings)
         validate_packet(packet)
         coverage = assess_coverage(packet)
+        readiness = assess_readiness(packet, coverage, max_input_tokens=max_input_tokens, max_output_tokens=max_output_tokens,
+                                     model=model or "gpt-4.1-mini", pricing=pricing, synthetic=mode == "offline")
         root.mkdir(parents=True, exist_ok=True)
         # Freeze acquisition/coverage before any possible paid request.
-        for name, value in (("v2_evidence_packet.json", packet), ("v2_evidence_coverage.json", coverage)):
+        for name, value in (("v2_evidence_packet.json", packet), ("v2_evidence_coverage.json", coverage), ("v2_research_readiness.json", readiness)):
             (root/name).write_text(public_json(value), encoding="utf-8")
         policy = json.loads(Path(source_policy).read_text(encoding="utf-8")) if source_policy else {}
         usage = {"api_calls": 0, "simulated": mode == "offline", "status": "NOT_CALLED"}
@@ -103,6 +106,7 @@ def generate_package(*, mode, output, market_date=None, archive=None, recordings
             if not authorized: reasons.append("PAID_LLM_AUTHORIZATION_REQUIRED")
             if not os.getenv("OPENAI_API_KEY"): reasons.append("LLM_CREDENTIALS_UNAVAILABLE")
             if not coverage["reasoning_testable"]: reasons.append("EVIDENCE_INPUTS_INCOMPLETE")
+            if readiness["status"] != "READY_FOR_LLM_RESEARCH": reasons.append(readiness["status"])
             if not model or not pricing or max_spend_usd is None: reasons.append("MODEL_PRICING_SPENDING_CONFIG_REQUIRED")
             if reasons:
                 raw = {"status": "BLOCKED", "reasons": reasons}
@@ -130,7 +134,7 @@ def generate_package(*, mode, output, market_date=None, archive=None, recordings
             raise ValueError("ARTIFACT_SECRET_LEAK_BLOCKED")
         for name, value in rendered.items():
             (root/name).write_text(value, encoding="utf-8")
-        return {"status": raw["status"], "coverage": coverage, "usage": usage}
+        return {"status": raw["status"], "coverage": coverage, "usage": usage, "readiness": readiness}
 
 
 def main():
@@ -155,6 +159,7 @@ def main():
         print("V2_SESSION="+result["status"])
         print("USABLE_EVIDENCE_TEXT_ITEMS="+str(result["coverage"]["usable_text_items"]))
         print("LLM_API_CALLS="+str(result["usage"]["api_calls"]))
+        print("RESEARCH_READINESS="+result["readiness"]["status"])
         return 0 if result["status"] in {"PROPOSAL", "NOT_REQUESTED"} else 1
     except Exception as exc:
         print("V2_SESSION_FAILED="+(str(exc) if isinstance(exc, ValueError) and str(exc).isupper() else type(exc).__name__))

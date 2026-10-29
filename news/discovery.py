@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from config import DISCOVERY_MAX_QUERIES_PER_SYMBOL, DISCOVERY_MAX_RESULTS_PER_QUERY, DISCOVERY_REQUEST_DELAY_SECONDS
 from cache_config import cache_path
 from news.gdelt import GdeltClient
+from news.evidence_capture import observe, active as capture_active
 from news.google_news import GoogleNewsClient
 
 
@@ -82,6 +83,12 @@ class BroadDiscovery:
                         time.sleep(DISCOVERY_REQUEST_DELAY_SECONDS)
                     result = client.search(query, DISCOVERY_MAX_RESULTS_PER_QUERY)
                     self._write_cache(symbol, provider_name, query, result)
+                if capture_active():
+                    observe(provider_name, [{"title": row.get("title", ""), "source": row.get("publisher_hint") or row.get("source_domain", ""),
+                        "url": row.get("url", ""), "published_at": row.get("published_at") if provider_name != "gdelt" else None,
+                        "provider_limitations": ["METADATA_ONLY_UNRESOLVED_URL_OR_SEENDATE_NOT_PUBLICATION"]}
+                        for row in result.get("candidates", [])], scope="COMPANY_FALLBACK", symbols=[symbol],
+                        state="UNAVAILABLE" if result.get("status") == "failed" else "AVAILABLE")
                 if result.get("status") == "failed":
                     provider_failed = True
                     if provider_name == "gdelt":

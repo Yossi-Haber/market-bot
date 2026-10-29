@@ -1,6 +1,7 @@
 """Free-access, metadata-only evidence sources for catalyst collection."""
 
 from __future__ import annotations
+from news.evidence_capture import observe, active as capture_active
 
 import json
 import logging
@@ -117,6 +118,12 @@ class SecSource(SourceClient):
             except (TypeError, ValueError, IndexError, KeyError):
                 continue
             results.append(Evidence("SEC EDGAR", 1, f"SEC {form} filing for {symbol}", event_datetime, url, self._retrieved_at(), f"{form} filing dated {filing_date.isoformat()}", False, "SEC_FILING", event_datetime, True, source_group="sec", is_direct=True))
+            if capture_active():
+                filing_items = recent.get("items")
+                observe("sec", [{"title": f"SEC {form} filing for {symbol}", "source": "SEC EDGAR", "url": url,
+                    "published_at": accepted, "affected_symbols": [symbol], "filing_type": form,
+                    "sec_items": filing_items[index:index+1] if isinstance(filing_items, list) else [],
+                    "provider_limitations": ["SEC_SUBMISSIONS_METADATA_NO_FILING_BODY"]}], scope="SEC_COMPANY", symbols=[symbol])
         return SourceResult(results, "searched")
 
     def _cik_for_symbol(self, symbol: str) -> str | None:
