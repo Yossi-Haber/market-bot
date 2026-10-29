@@ -1,0 +1,44 @@
+{
+  "research_version": 2,
+  "proposal_only": true,
+  "events": [
+    {
+      "event_id": "event1",
+      "scope": "company",
+      "event_type": "CONTRACT",
+      "securities": [
+        "TEST"
+      ],
+      "sectors": [],
+      "factual_summary": "Synthetic company announced a contract.",
+      "evidence_refs": [
+        "ev_fa1db9e496011efa206368fcf53037aeb6af130f270620d701c6c4cdc7db26cf"
+      ],
+      "supporting_quotations": [
+        {
+          "evidence_id": "ev_fa1db9e496011efa206368fcf53037aeb6af130f270620d701c6c4cdc7db26cf",
+          "quote": "Synthetic company announced a contract."
+        }
+      ],
+      "event_verification": "SINGLE_SOURCE_REPORTED",
+      "unresolved_questions": [
+        "Price impact not established."
+      ]
+    }
+  ],
+  "movement_assessments": [
+    {
+      "subject": "TEST",
+      "linked_event_ids": [
+        "event1"
+      ],
+      "attribution": "UNEXPLAINED",
+      "rationale": "No causal evidence supplied.",
+      "alternative_interpretations": [],
+      "evidence_refs": [
+        "ev_fa1db9e496011efa206368fcf53037aeb6af130f270620d701c6c4cdc7db26cf"
+      ],
+      "abstention_reason": "Causal relationship unverified."
+    }
+  ]
+}

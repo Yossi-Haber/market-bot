@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "research_version": {
+      "const": 2
+    },
+    "proposal_only": {
+      "const": true
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "company",
+              "sector",
+              "macro",
+              "geopolitical",
+              "other"
+            ]
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "securities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sectors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "factual_summary": {
+            "type": "string"
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "supporting_quotations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "evidence_id": {
+                  "type": "string"
+                },
+                "quote": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "evidence_id",
+                "quote"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "event_verification": {
+            "enum": [
+              "PRIMARY_CONFIRMED",
+              "MULTI_SOURCE_REPORTED",
+              "SINGLE_SOURCE_REPORTED",
+              "UNVERIFIED"
+            ]
+          },
+          "unresolved_questions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "event_id",
+          "scope",
+          "event_type",
+          "securities",
+          "sectors",
+          "factual_summary",
+          "evidence_refs",
+          "supporting_quotations",
+          "event_verification",
+          "unresolved_questions"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "movement_assessments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string"
+          },
+          "linked_event_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "attribution": {
+            "enum": [
+              "SUPPORTED_CATALYST",
+              "PLAUSIBLE_CATALYST",
+              "SECTOR_CO_MOVEMENT",
+              "UNEXPLAINED"
+            ]
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "alternative_interpretations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "abstention_reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "linked_event_ids",
+          "attribution",
+          "rationale",
+          "alternative_interpretations",
+          "evidence_refs",
+          "abstention_reason"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "research_version",
+    "proposal_only",
+    "events",
+    "movement_assessments"
+  ],
+  "additionalProperties": false
+}

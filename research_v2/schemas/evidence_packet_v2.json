@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "packet_version": {
+      "const": 2
+    },
+    "market_date": {
+      "type": "string"
+    },
+    "session": {
+      "type": "object",
+      "properties": {
+        "timezone": {
+          "type": "string"
+        },
+        "regular_open_utc": {
+          "type": "string"
+        },
+        "regular_close_utc": {
+          "type": "string"
+        },
+        "previous_session_close_utc": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "timezone",
+        "regular_open_utc",
+        "regular_close_utc",
+        "previous_session_close_utc"
+      ],
+      "additionalProperties": false
+    },
+    "market_context": {
+      "type": "object"
+    },
+    "movers": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "peer_groups": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "evidence_id": {
+            "type": "string"
+          },
+          "source_provider": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "original_url": {
+            "type": "string"
+          },
+          "normalized_url": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "source_text": {
+            "type": "string"
+          },
+          "source_category": {
+            "type": "string"
+          },
+          "acquisition_method": {
+            "type": "string"
+          },
+          "published_at": {
+            "type": "string"
+          },
+          "publication_timestamp_original": {
+            "type": "string"
+          },
+          "retrieved_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "symbols": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "publication_precision": {
+            "enum": [
+              "TIMESTAMP",
+              "DATE_ONLY"
+            ]
+          },
+          "content_completeness": {
+            "enum": [
+              "FULL_TEXT",
+              "EXCERPT",
+              "TITLE_ONLY"
+            ]
+          },
+          "temporal_tag": {
+            "enum": [
+              "PREVIOUS_AFTER_HOURS",
+              "PRE_MARKET",
+              "REGULAR_SESSION",
+              "POST_CLOSE",
+              "TIME_UNCERTAIN"
+            ]
+          },
+          "provider_limitations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "filing_metadata": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "source_provider",
+          "publisher",
+          "original_url",
+          "normalized_url",
+          "title",
+          "source_text",
+          "source_category",
+          "acquisition_method",
+          "published_at",
+          "publication_timestamp_original",
+          "retrieved_at",
+          "symbols",
+          "publication_precision",
+          "content_completeness",
+          "temporal_tag",
+          "provider_limitations",
+          "filing_metadata"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "coverage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "AVAILABLE",
+              "BUDGET_NOT_COLLECTED",
+              "HYGIENE_EXCLUDED",
+              "INCOMPLETE_CONTENT",
+              "NO_EVIDENCE",
+              "QUOTA_EXHAUSTED",
+              "UNAVAILABLE"
+            ]
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "accepted": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "excluded": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "budget_excluded": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "incomplete": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "provider",
+          "state",
+          "limitations",
+          "accepted",
+          "excluded",
+          "budget_excluded",
+          "incomplete"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "diagnostics": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "packet_version",
+    "market_date",
+    "session",
+    "market_context",
+    "movers",
+    "peer_groups",
+    "evidence",
+    "coverage",
+    "diagnostics"
+  ],
+  "additionalProperties": false
+}
